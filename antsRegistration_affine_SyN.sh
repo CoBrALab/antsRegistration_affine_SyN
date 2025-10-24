@@ -586,11 +586,19 @@ function debug() {
   true
 }
 
+function calc() { awk "BEGIN{ printf $* }"; }
+
 # Add handler for failure to show where things went wrong
 failure_handler() {
-  local lineno=${1}
-  local msg=${2}
-  alert "Failed at ${lineno}: ${msg}"
+  local lineno=$2
+  local fn=$3
+  local exitstatus=$4
+  local msg=$5
+  local lineno_fns=${1% 0}
+  if [[ "$lineno_fns" != "0" ]]; then
+    lineno="${lineno} ${lineno_fns}"
+  fi
+  echo "${BASH_SOURCE[1]}:${fn}[${lineno}] Failed with status ${exitstatus}: $msg"
 }
 trap 'failure_handler ${LINENO} "$BASH_COMMAND"' ERR
 
@@ -627,12 +635,11 @@ for program in ImageMath \
   fi
 done
 
-
 # Output checking
 if [[ "${_arg_clobber}" == "off" ]]; then
   for file in ${_arg_outputbasename}0_GenericAffine.xfm ${_arg_outputbasename}0GenericAffine.mat \
-              ${_arg_outputbasename}1_NL.xfm ${_arg_outputbasename}1Warp.nii.gz \
-              ${_arg_resampled_output[0]-} ${_arg_resampled_linear_output[0]-}; do
+    ${_arg_outputbasename}1_NL.xfm ${_arg_outputbasename}1Warp.nii.gz \
+    ${_arg_resampled_output[0]-} ${_arg_resampled_linear_output[0]-}; do
     if [[ -s "${file}" ]]; then
       failure "File ${file} already exists and --clobber not specified!"
     fi
@@ -689,9 +696,9 @@ fi
 
 # Map weights into array, check length
 IFS=',' read -r -a _arg_weights <<<${_arg_weights}
-if (( ${#_arg_weights[@]} == 1 )) &&  (( ${#_arg_fixed[@]} > 0 )); then
-  _arg_weights=($(for n in $(seq $(( ${#_arg_fixed[@]} + 1 )) ); do echo 1; done))
-elif (( ${#_arg_weights[@]} == ${#_arg_fixed[@]} + 1 )); then
+if ((${#_arg_weights[@]} == 1)) && ((${#_arg_fixed[@]} > 0)); then
+  _arg_weights=($(for n in $(seq $((${#_arg_fixed[@]} + 1))); do echo 1; done))
+elif ((${#_arg_weights[@]} == ${#_arg_fixed[@]} + 1)); then
   true
 else
   error "Got fixed=(${_arg_fixed[*]})"
@@ -699,7 +706,6 @@ else
   error "Got weights=(${_arg_weights[*]})"
   failure "Incorrect number of weights provided"
 fi
-
 
 if [[ ${_arg_mask_extract} == "on" && ${_arg_fixed_mask} != "NOMASK" && ${_arg_moving_mask} != "NOMASK" ]]; then
   info "Creating extracted versions of input files using masks"
@@ -719,23 +725,23 @@ else
   movingfile1=${_arg_movingfile}
   fixedfile1=${_arg_fixedfile}
   i=0
-  while (( ${i} < ${#_arg_fixed[@]} )); do
+  while ((${i} < ${#_arg_fixed[@]})); do
     info "Using $(basename ${_arg_moving[i]}) and $(basename ${_arg_fixed[i]}) as additional moving and fixed image pair"
-    declare "movingfile$((i+2))=${_arg_moving[i]}"
-    declare "fixedfile$((i+2))=${_arg_fixed[i]}"
+    declare "movingfile$((i + 2))=${_arg_moving[i]}"
+    declare "fixedfile$((i + 2))=${_arg_fixed[i]}"
     ((++i))
   done
   movingmask=${_arg_moving_mask}
   fixedmask=${_arg_fixed_mask}
 fi
 
-if [[ (${fixedmask} == "NOMASK" || ${fixedmask} == "NULL") ]] && \
-   [[ (${movingmask} == "NOMASK" || ${movingmask} == "NULL") ]]; then
+if [[ (${fixedmask} == "NOMASK" || ${fixedmask} == "NULL") ]] &&
+  [[ (${movingmask} == "NOMASK" || ${movingmask} == "NULL") ]]; then
   _no_masks="--no-masks"
 fi
 
 # Expand comma separated list into array
-IFS=', ' read -r -a _arg_initial_transform <<< "${_arg_initial_transform}"
+IFS=', ' read -r -a _arg_initial_transform <<<"${_arg_initial_transform}"
 initial_transform=""
 for initxfm in "${_arg_initial_transform[@]}"; do
   if [[ ${initxfm} == "com-masks" ]]; then
@@ -747,8 +753,8 @@ for initxfm in "${_arg_initial_transform[@]}"; do
       initial_transform+="--initial-moving-transform [ ${fixedfile1},${movingfile1},1 ] "
     fi
   elif [[ ${initxfm} == "com" ]]; then
-      info "Adding Center-of-Mass between $(basename ${fixedfile1}) and $(basename ${movingfile1}) for registration initialization"
-      initial_transform+="--initial-moving-transform [ ${fixedfile1},${movingfile1},1 ] "
+    info "Adding Center-of-Mass between $(basename ${fixedfile1}) and $(basename ${movingfile1}) for registration initialization"
+    initial_transform+="--initial-moving-transform [ ${fixedfile1},${movingfile1},1 ] "
   elif [[ ${initxfm} == "cov" ]]; then
     info "Adding Center-of-Volume between $(basename ${fixedfile1}) and $(basename ${movingfile1}) for registration initialization"
     initial_transform+="--initial-moving-transform [ ${fixedfile1},${movingfile1},0 ] "
@@ -762,7 +768,7 @@ for initxfm in "${_arg_initial_transform[@]}"; do
     initial_transform=""
     break
   else
-    failure "Registration initalization ${initxfm} unrecognized and not a file"
+    failure "Registration initialization ${initxfm} unrecognized and not a file"
   fi
 done
 
@@ -775,7 +781,7 @@ fi
 if [[ ${_arg_close} == "on" ]]; then
   _arg_close="--close"
   if [[ -n ${initial_transform} ]]; then
-        warning "Registration parameter --close specified but --initial-transform is not \"none\" ensure this is what you want"
+    warning "Registration parameter --close specified but --initial-transform is not \"none\" ensure this is what you want"
   fi
 else
   _arg_close=""
@@ -826,7 +832,7 @@ if [[ ${_arg_skip_linear} == "off" ]]; then
     ${initial_transform} \
     $(eval echo ${steps_linear})"
   debug "Linear registration command"
-  debug "$(tr -s "[:blank:]" <<< ${run_command})"
+  debug "$(tr -s "[:blank:]" <<<${run_command})"
   ${run_command}
 
   # Generate new transform stack
@@ -841,13 +847,13 @@ if [[ ${_arg_skip_linear} == "off" ]]; then
 
 else
   if [[ -z ${initial_transform} ]]; then
-     # Generate identity transform
-     if [[ -n ${minc_mode} ]]; then
-       param2xfm -clobber "${output_linear_xfm}"
-     else
-       ImageMath 3 "${output_linear_xfm}" MakeAffineTransform 1
-     fi
-     second_stage_initial="--initial-moving-transform ${output_linear_xfm}"
+    # Generate identity transform
+    if [[ -n ${minc_mode} ]]; then
+      param2xfm -clobber "${output_linear_xfm}"
+    else
+      ImageMath 3 "${output_linear_xfm}" MakeAffineTransform 1
+    fi
+    second_stage_initial="--initial-moving-transform ${output_linear_xfm}"
   else
     second_stage_initial=${initial_transform}
   fi
@@ -855,37 +861,37 @@ fi
 
 # If requested, do linear resample
 if [[ ${_arg_resampled_linear_output[0]-} && ${_arg_skip_nonlinear} == "off" ]]; then
-    info "Generating linear transform resampled output of ${_arg_movingfile} to $(basename ${_arg_resampled_linear_output[0]})"
+  info "Generating linear transform resampled output of ${_arg_movingfile} to $(basename ${_arg_resampled_linear_output[0]})"
+  antsApplyTransforms -d 3 ${_arg_float} ${_arg_verbose} --interpolation BSpline[5] \
+    -i ${_arg_movingfile} \
+    -r ${_arg_fixedfile} \
+    ${transform_stack[@]/#/--transform } \
+    -o ${tmpdir}/resample.h5
+  ThresholdImage 3 ${tmpdir}/resample.h5 "${tmpdir}/clampmask.h5" 1e-12 Inf 1 0
+  ImageMath 3 "${_arg_resampled_linear_output[0]}" m ${tmpdir}/resample.h5 "${tmpdir}/clampmask.h5"
+  i=1
+  while ((i < ${#_arg_resampled_linear_output[@]})); do
+    info "Generating linear transform resampled output of ${_arg_moving[i - 1]} to $(basename ${_arg_resampled_linear_output[i]})"
     antsApplyTransforms -d 3 ${_arg_float} ${_arg_verbose} --interpolation BSpline[5] \
-      -i ${_arg_movingfile} \
-      -r ${_arg_fixedfile} \
+      -i ${_arg_moving[i - 1]} \
+      -r ${_arg_fixed[i - 1]} \
       ${transform_stack[@]/#/--transform } \
       -o ${tmpdir}/resample.h5
     ThresholdImage 3 ${tmpdir}/resample.h5 "${tmpdir}/clampmask.h5" 1e-12 Inf 1 0
-    ImageMath 3 "${_arg_resampled_linear_output[0]}" m ${tmpdir}/resample.h5 "${tmpdir}/clampmask.h5"
-    i=1
-    while (( i < ${#_arg_resampled_linear_output[@]} )); do
-    info "Generating linear transform resampled output of ${_arg_moving[i-1]} to $(basename ${_arg_resampled_linear_output[i]})"
-        antsApplyTransforms -d 3 ${_arg_float} ${_arg_verbose} --interpolation BSpline[5] \
-          -i ${_arg_moving[i-1]} \
-          -r ${_arg_fixed[i-1]} \
-          ${transform_stack[@]/#/--transform } \
-          -o ${tmpdir}/resample.h5
-      ThresholdImage 3 ${tmpdir}/resample.h5 "${tmpdir}/clampmask.h5" 1e-12 Inf 1 0
-      ImageMath 3 "${_arg_resampled_linear_output[i]}" m ${tmpdir}/resample.h5 "${tmpdir}/clampmask.h5"
-      rm -f "${tmpdir}/clampmask.h5"
-      ((++i))
-    done
+    ImageMath 3 "${_arg_resampled_linear_output[i]}" m ${tmpdir}/resample.h5 "${tmpdir}/clampmask.h5"
+    rm -f "${tmpdir}/clampmask.h5"
+    ((++i))
+  done
 fi
 
 # Setup SyN image pairs
 if [[ ${_arg_fast} == "on" ]]; then
   _arg_syn_metric="Mattes[32]"
 fi
-syn_metric="--metric $(grep -o -E '^[a-zA-Z]+' <<< ${_arg_syn_metric})[ ${fixedfile1},${movingfile1},${_arg_weights[0]},$(grep -o -E '[0-9]+' <<< ${_arg_syn_metric}),None,1,1 ]"
+syn_metric="--metric $(grep -o -E '^[a-zA-Z]+' <<<${_arg_syn_metric})[ ${fixedfile1},${movingfile1},${_arg_weights[0]},$(grep -o -E '[0-9]+' <<<${_arg_syn_metric}),None,1,1 ]"
 i=0
-while (( i < ${#_arg_fixed[@]} )); do
-  syn_metric+=" --metric $(grep -o -E '^[a-zA-Z]+' <<< ${_arg_syn_metric})[ ${_arg_fixed[${i}]},${_arg_moving[${i}]},${_arg_weights[$((i+1))]},$(grep -o -E '[0-9]+' <<< ${_arg_syn_metric}),None,1,1 ]"
+while ((i < ${#_arg_fixed[@]})); do
+  syn_metric+=" --metric $(grep -o -E '^[a-zA-Z]+' <<<${_arg_syn_metric})[ ${_arg_fixed[${i}]},${_arg_moving[${i}]},${_arg_weights[$((i + 1))]},$(grep -o -E '[0-9]+' <<<${_arg_syn_metric}),None,1,1 ]"
   ((++i))
 done
 
@@ -899,9 +905,9 @@ if [[ ${_arg_skip_nonlinear} == "off" ]]; then
     ${syn_metric} \
     $(eval echo ${steps_syn}) \
     --masks [ ${fixedmask},${movingmask} ]"
-    debug "Non-linear registration command"
-    debug "$(tr -s "[:blank:]" <<< ${run_command})"
-    ${run_command}
+  debug "Non-linear registration command"
+  debug "$(tr -s "[:blank:]" <<<${run_command})"
+  ${run_command}
 fi
 
 # Generate new transform stack
@@ -926,11 +932,11 @@ if [[ ${_arg_resampled_output[0]-} ]]; then
   rm -f ${tmpdir}/resample.h5 ${tmpdir}/clampmask.h5
 
   i=1
-  while (( i < ${#_arg_resampled_output[@]} )); do
-    info "Generating final resampled output of ${_arg_moving[i-1]} to $(basename ${_arg_resampled_output[i]})"
+  while ((i < ${#_arg_resampled_output[@]})); do
+    info "Generating final resampled output of ${_arg_moving[i - 1]} to $(basename ${_arg_resampled_output[i]})"
     antsApplyTransforms -d 3 ${_arg_float} ${_arg_verbose} --interpolation BSpline[5] \
-      -i ${_arg_moving[i-1]} \
-      -r ${_arg_fixed[i-1]} \
+      -i ${_arg_moving[i - 1]} \
+      -r ${_arg_fixed[i - 1]} \
       ${transform_stack[@]/#/--transform } \
       -o ${tmpdir}/resample.h5
     ThresholdImage 3 ${tmpdir}/resample.h5 ${tmpdir}/clampmask.h5 1e-12 Inf 1 0
