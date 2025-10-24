@@ -634,17 +634,15 @@ if [[ "${_arg_clobber}" == "off" ]]; then
               ${_arg_outputbasename}1_NL.xfm ${_arg_outputbasename}1Warp.nii.gz \
               ${_arg_resampled_output[0]-} ${_arg_resampled_linear_output[0]-}; do
     if [[ -s "${file}" ]]; then
-      error "File ${file} already exists and --clobber not specified!"
-      exit 1
+      failure "File ${file} already exists and --clobber not specified!"
     fi
   done
 fi
 
 if [[ ! ${#_arg_fixed[@]} -eq ${#_arg_moving[@]} ]]; then
-  error "Number of multispectral moving and fixed inputs not equal"
-  error "Got fixed=(${_arg_fixed[@]})"
-  error "Got moving=(${_arg_moving[@]})"
-  exit 1
+  error "Got fixed=(${_arg_fixed[*]})"
+  error "Got moving=(${_arg_moving[*]})"
+  failure "Number of multispectral moving and fixed inputs not equal"
 fi
 
 #Check for minc or nifti, make appropriate adjustments of transforms
@@ -652,8 +650,8 @@ if [[ "${_arg_movingfile}" == *mnc && "${_arg_fixedfile}" == *mnc ]]; then
   info "MINC input files detected, antsRegistration will be run with --minc"
   minc_mode="--minc"
   output_linear_xfm="${_arg_outputbasename}0_GenericAffine.xfm"
-elif [[ ("${_arg_movingfile}" == *mnc && "${_arg_fixedfile}" != *mnc) || ("${_arg_movingfile}" != *mnc && "${_arg_fixedfile}" == *mnc)  ]]; then
-  failure "Mixed MINC and non-MINC files detected as input, ITK MINC reader bug currently prevents mixing MINC with any other file type"
+elif [[ ("${_arg_movingfile}" == *mnc && "${_arg_fixedfile}" != *mnc) || ("${_arg_movingfile}" != *mnc && "${_arg_fixedfile}" == *mnc) ]]; then
+  failure "Mixed MINC and non-MINC files detected as input, ITK MINC reader bug currently (2025) prevents mixing MINC with any other file type"
 else
   minc_mode=""
   output_linear_xfm="${_arg_outputbasename}0GenericAffine.mat"
@@ -696,6 +694,9 @@ if (( ${#_arg_weights[@]} == 1 )) &&  (( ${#_arg_fixed[@]} > 0 )); then
 elif (( ${#_arg_weights[@]} == ${#_arg_fixed[@]} + 1 )); then
   true
 else
+  error "Got fixed=(${_arg_fixed[*]})"
+  error "Got moving=(${_arg_moving[*]})"
+  error "Got weights=(${_arg_weights[*]})"
   failure "Incorrect number of weights provided"
 fi
 
