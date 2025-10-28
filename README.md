@@ -71,13 +71,9 @@ The script supports registration of multiple image pairs simultaneously:
 ## Outputs
 
 The script generates several output files:
-- `<outputbasename>0GenericAffine.mat` (or `.xfm` for MINC): The affine transformation
-- `<outputbasename>1Warp.nii.gz` (or `_NL.xfm` for MINC): The non-linear transformation
+- `<outputbasename>0GenericAffine.mat` (or `0_GenericAffine.xfm` for MINC): The affine transformation
+- `<outputbasename>1Warp.nii.gz` (or `1_NL.xfm` for MINC): The non-linear transformation
 - Additional resampled outputs if requested
-
-## Utilities
-
-The repository also includes `histogram-bins.sh`, a utility script that implements the Freedman-Diaconis rule for computing optimal histogram bins. This is useful for determining appropriate binning parameters for image registration.
 
 ## Examples
 
@@ -95,11 +91,3 @@ Multispectral registration:
 ```bash
 ./antsRegistration_affine_SyN.sh --moving additional_moving.nii.gz --fixed additional_fixed.nii.gz --weights 1,0.5 moving.nii.gz fixed.nii.gz output_
 ```
-
-## License
-
-This software is released under an open-source license. See the script headers for detailed licensing information.
-
-## Acknowledgments
-
-This tool is built on top of the Advanced Normalization Tools (ANTs) package. Users should cite the relevant ANTs papers when using this tool for research purposes.
