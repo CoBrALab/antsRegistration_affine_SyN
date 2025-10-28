@@ -2,11 +2,16 @@
 
 A wrapper script around ANTs' `antsRegistration` tool that provides optimized registration pyramids for both affine and SyN (non-linear) transformations. This tool simplifies the process of image registration by providing sensible defaults and automatic parameter generation based on image properties.
 
+
+
 ## Features
 
 - Combined affine and SyN (non-linear) registration in a single command
 - Support for both MINC and NIFTI file formats
 - Automatic generation of multi-resolution pyramids based on image properties
+
+![SIFT Multi-octave pyramid](pyramid.png "SIFT Multi-octave pyramid")
+
 - Support for multispectral registration
 - Flexible initialization options (center of mass, center of volume, etc.)
 - Optional masking and histogram matching
