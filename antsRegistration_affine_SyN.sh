@@ -31,6 +31,7 @@
 # ARG_OPTIONAL_SINGLE([linear-smoothing-sigmas],[],[Smoothing sigmas for linear stage, provide to override automatic generation, must be provided with shrinks and convergence],[])
 # ARG_OPTIONAL_SINGLE([linear-convergence],[],[Convergence levels for linear stage, provide to override automatic generation, must be provided with shrinks and sigmas],[])
 # ARG_OPTIONAL_SINGLE([final-iterations-linear],[],[Maximum iterations at finest scale for linear automatic generation],[50])
+# ARG_OPTIONAL_BOOLEAN([kmeans-transformed-linear],[],[KMeans cluster image intensities for linear registration],[])
 
 # ARG_OPTIONAL_BOOLEAN([skip-nonlinear],[],[Skip the nonlinear stage])
 # ARG_OPTIONAL_SINGLE([syn-control],[],[Non-linear (SyN) gradient and regularization parameters, not checked for correctness],[0.4,4,0])
@@ -102,6 +103,7 @@ _arg_linear_shrink_factors=
 _arg_linear_smoothing_sigmas=
 _arg_linear_convergence=
 _arg_final_iterations_linear="50"
+_arg_kmeans_transformed_linear="off"
 _arg_skip_nonlinear="off"
 _arg_syn_control="0.4,4,0"
 _arg_syn_metric="CC[4]"
@@ -119,7 +121,7 @@ _arg_debug="off"
 
 print_help() {
   printf '%s\n' "A wrapper around antsRegistration providing optimized registration pyramids"
-  printf 'Usage: %s [-h|--help] [--moving-mask <arg>] [--fixed-mask <arg>] [--(no-)mask-extract] [--(no-)keep-mask-after-extract] [-o|--resampled-output <arg>] [--resampled-linear-output <arg>] [--initial-transform <arg>] [--linear-type <LINEAR>] [--(no-)close] [--(no-)rough] [--fixed <arg>] [--moving <arg>] [--weights <arg>] [--convergence <arg>] [--(no-)skip-linear] [--linear-metric <arg>] [--linear-shrink-factors <arg>] [--linear-smoothing-sigmas <arg>] [--linear-convergence <arg>] [--final-iterations-linear <arg>] [--(no-)skip-nonlinear] [--syn-control <arg>] [--syn-metric <arg>] [--syn-shrink-factors <arg>] [--syn-smoothing-sigmas <arg>] [--syn-convergence <arg>] [--final-iterations-nonlinear <arg>] [--(no-)histogram-matching] [--winsorize-image-intensities <arg>] [--(no-)fast] [--(no-)float] [-c|--(no-)clobber] [-v|--(no-)verbose] [-d|--(no-)debug] <movingfile> <fixedfile> <outputbasename>\n' "$0"
+  printf 'Usage: %s [-h|--help] [--moving-mask <arg>] [--fixed-mask <arg>] [--(no-)mask-extract] [--(no-)keep-mask-after-extract] [-o|--resampled-output <arg>] [--resampled-linear-output <arg>] [--initial-transform <arg>] [--linear-type <LINEAR>] [--(no-)close] [--(no-)rough] [--fixed <arg>] [--moving <arg>] [--weights <arg>] [--convergence <arg>] [--(no-)skip-linear] [--linear-metric <arg>] [--linear-shrink-factors <arg>] [--linear-smoothing-sigmas <arg>] [--linear-convergence <arg>] [--final-iterations-linear <arg>] [--(no-)kmeans-transformed-linear] [--(no-)skip-nonlinear] [--syn-control <arg>] [--syn-metric <arg>] [--syn-shrink-factors <arg>] [--syn-smoothing-sigmas <arg>] [--syn-convergence <arg>] [--final-iterations-nonlinear <arg>] [--(no-)histogram-matching] [--winsorize-image-intensities <arg>] [--(no-)fast] [--(no-)float] [-c|--(no-)clobber] [-v|--(no-)verbose] [-d|--(no-)debug] <movingfile> <fixedfile> <outputbasename>\n' "$0"
   printf '\t%s\n' "<movingfile>: The moving image"
   printf '\t%s\n' "<fixedfile>: The fixed image"
   printf '\t%s\n' "<outputbasename>: The basename for the output transforms"
@@ -144,6 +146,7 @@ print_help() {
   printf '\t%s\n' "--linear-smoothing-sigmas: Smoothing sigmas for linear stage, provide to override automatic generation, must be provided with shrinks and convergence (no default)"
   printf '\t%s\n' "--linear-convergence: Convergence levels for linear stage, provide to override automatic generation, must be provided with shrinks and sigmas (no default)"
   printf '\t%s\n' "--final-iterations-linear: Maximum iterations at finest scale for linear automatic generation (default: '50')"
+  printf '\t%s\n' "--kmeans-transformed-linear, --no-kmeans-transformed-linear: KMeans cluster image intensities for linear registration (off by default)"
   printf '\t%s\n' "--skip-nonlinear, --no-skip-nonlinear: Skip the nonlinear stage (off by default)"
   printf '\t%s\n' "--syn-control: Non-linear (SyN) gradient and regularization parameters, not checked for correctness (default: '0.4,4,0')"
   printf '\t%s\n' "--syn-metric: Non-linear (SyN) metric and radius or bins, choose Mattes[32] for faster registrations (default: 'CC[4]')"
@@ -316,6 +319,10 @@ parse_commandline() {
       ;;
     --final-iterations-linear=*)
       _arg_final_iterations_linear="${_key##--final-iterations-linear=}"
+      ;;
+    --no-kmeans-transformed-linear | --kmeans-transformed-linear)
+      _arg_kmeans_transformed_linear="on"
+      test "${1:0:5}" = "--no-" && _arg_kmeans_transformed_linear="off"
       ;;
     --no-skip-nonlinear | --skip-nonlinear)
       _arg_skip_nonlinear="on"
@@ -1089,6 +1096,45 @@ else
 fi
 
 if [[ ${_arg_skip_linear} == "off" ]]; then
+  # Implement https://www.sciencedirect.com/science/article/pii/S1361841505000435
+  # If Kmeans is requested, generate temporary images and swap variables
+  if [[ ${_arg_kmeans_transformed_linear} == "on" ]]; then
+    info "Generating Kmeans transformed images for linear registration"
+    # Store original filenames to restore later
+    declare -a original_movingfiles
+    declare -a original_fixedfiles
+
+    # Handle the first pair (fixedfile1, movingfile1)
+    original_movingfiles[0]="${movingfile1}"
+    original_fixedfiles[0]="${fixedfile1}"
+
+    ThresholdImage 3 "${movingfile1}" "${tmpdir}/moving_kmeans_1.h5" Kmeans 31
+    ThresholdImage 3 "${fixedfile1}" "${tmpdir}/fixed_kmeans_1.h5" Kmeans 31
+
+    movingfile1="${tmpdir}/moving_kmeans_1.h5"
+    fixedfile1="${tmpdir}/fixed_kmeans_1.h5"
+
+    # Handle additional pairs
+    i=0
+    while ((i < ${#_arg_fixed[@]})); do
+      idx=$((i + 2))
+      # Use indirect reference to get current values
+      curr_moving="movingfile${idx}"
+      curr_fixed="fixedfile${idx}"
+
+      original_movingfiles[${i} + 1]="${!curr_moving}"
+      original_fixedfiles[${i} + 1]="${!curr_fixed}"
+
+      ThresholdImage 3 "${!curr_moving}" "${tmpdir}/moving_kmeans_${idx}.h5" Kmeans 31
+      ThresholdImage 3 "${!curr_fixed}" "${tmpdir}/fixed_kmeans_${idx}.h5" Kmeans 31
+
+      declare "movingfile${idx}=${tmpdir}/moving_kmeans_${idx}.h5"
+      declare "fixedfile${idx}=${tmpdir}/fixed_kmeans_${idx}.h5"
+
+      ((++i))
+    done
+  fi
+
   run_command="antsRegistration --dimensionality 3 ${_arg_verbose} ${minc_mode} ${_arg_float} \
     --output [ ${tmpdir}/$(basename ${_arg_outputbasename}) ] \
     --use-histogram-matching ${_arg_histogram_matching} \
@@ -1098,6 +1144,20 @@ if [[ ${_arg_skip_linear} == "off" ]]; then
   debug "Linear registration command"
   debug "$(tr -s "[:blank:]" <<<${run_command})"
   ${run_command}
+
+  # Restore original filenames if Kmeans was used
+  if [[ ${_arg_kmeans_transformed_linear} == "on" ]]; then
+    movingfile1="${original_movingfiles[0]}"
+    fixedfile1="${original_fixedfiles[0]}"
+
+    i=0
+    while ((i < ${#_arg_fixed[@]})); do
+      idx=$((i + 2))
+      declare "movingfile${idx}=${original_movingfiles[${i} + 1]}"
+      declare "fixedfile${idx}=${original_fixedfiles[${i} + 1]}"
+      ((++i))
+    done
+  fi
 
   # Generate new transform stack
   transform_stack=()
