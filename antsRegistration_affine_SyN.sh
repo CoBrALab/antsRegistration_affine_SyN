@@ -794,7 +794,7 @@ function make_affine_pyramid {
 
     echo --transform ${single_transform} \\
     for ((imagenum = 0; imagenum < number_of_image_pairs; imagenum++)); do
-      echo "--metric ${linear_metric}[ \${fixedfile$((imagenum + 1))},\${movingfile$((imagenum + 1))},${weights_arr[imagenum]:-1},32,None,1,1 ]" \\
+      echo "--metric ${linear_metric}[ \${fixedfile$((imagenum + 1))},\${movingfile$((imagenum + 1))},${weights_arr[imagenum]:-1},32,Regular,1,1 ]" \\
     done
     echo '--masks [ ${fixedmask},${movingmask} ]' \\
     echo --shrink-factors "${linear_shrink_factors}" \\
@@ -845,7 +845,7 @@ function make_affine_pyramid {
     iterations=""
     echo --transform ${reg_types[((${octave} - 1))]} \\
     for ((imagenum = 0; imagenum < number_of_image_pairs; imagenum++)); do
-      echo "--metric ${linear_metric}[ \${fixedfile$((imagenum + 1))},\${movingfile$((imagenum + 1))},${weights_arr[imagenum]},32,None,1,1 ]" \\
+      echo "--metric ${linear_metric}[ \${fixedfile$((imagenum + 1))},\${movingfile$((imagenum + 1))},${weights_arr[imagenum]},32,Regular,1,1 ]" \\
     done
     # How many levels to repeat at each scale
     for scale in {5..1}; do
