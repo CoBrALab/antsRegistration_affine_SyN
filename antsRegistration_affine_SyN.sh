@@ -563,6 +563,7 @@ function debug() {
 }
 
 function calc() { awk "BEGIN{ printf $* }"; }
+function round() { awk "BEGIN{ printf \"%.0f\", ($*) }"; }
 
 # Add handler for failure to show where things went wrong
 failure_handler() {
@@ -638,11 +639,11 @@ function make_syn_pyramid {
   fi
 
   # Calculate to guarantee at least 16 voxels on a side
-  max_shrink=$(calc "int(${min_length}/16)")
-  max_octave=$(calc "int(log(${max_shrink})/log(2) + 0.5)")
+  local max_shrink=$(round $(calc "${min_length}/16"))
+  local max_octave=$(round $(calc "log(${max_shrink})/log(2) + 0.55"))
 
   # If close is enabled, reduce the maximum scale
-  if [[ "$close" == "on" ]]; then
+  if [[ "$close" == "on" && ${max_octave} -gt 2 ]]; then
     max_octave=2
   fi
 
@@ -804,8 +805,8 @@ function make_affine_pyramid {
   fi
 
   # Calculate to guarantee at least 16 voxels on a side
-  local max_shrink=$(calc "int(${min_length}/16)")
-  local max_octave=$(calc "int(log(${max_shrink})/log(2) + 0.5)")
+  local  max_shrink=$(round $(calc "${min_length}/16"))
+  local max_octave=$(round $(calc "log(${max_shrink})/log(2) + 0.55"))
 
   # If close is enabled, reduce the maximum scale
   if [[ "$close" == "on" ]]; then
