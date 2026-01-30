@@ -805,7 +805,7 @@ function make_affine_pyramid {
   fi
 
   # Calculate to guarantee at least 16 voxels on a side
-  local  max_shrink=$(round $(calc "${min_length}/16"))
+  local max_shrink=$(round $(calc "${min_length}/16"))
   local max_octave=$(round $(calc "log(${max_shrink})/log(2) + 0.55"))
 
   # If close is enabled, reduce the maximum scale
@@ -819,7 +819,7 @@ function make_affine_pyramid {
   fi
 
   # Reversed list of stages to register
-  for ((octave = 0; octave < max_octave; octave++)); do
+  for ((octave = 0; octave < max_octave + 5; octave++)); do
     if ((octave == 0)) || ((octave == 1)); then
       if [[ "${reg_type}" == "rigid" || "${reg_type}" == "lsq6" ]]; then
         reg_types+=("Rigid[ 0.1 ]")
@@ -839,41 +839,50 @@ function make_affine_pyramid {
     fi
   done
 
+  if [[ ${max_octave} -lt 4 && ${close} == "off" ]]; then
+    octave_padding=$(calc 4 - ${max_octave})
+  else
+    octave_padding=0
+  fi
+
   # How many downsample scales to go through
   for ((octave = max_octave; octave >= ${min_octave}; octave--)); do
-    shrinks=""
-    smooths=""
-    iterations=""
-    echo --transform ${reg_types[((${octave} - 1))]} \\
-    for ((imagenum = 0; imagenum < number_of_image_pairs; imagenum++)); do
-      echo "--metric ${linear_metric}[ \${fixedfile$((imagenum + 1))},\${movingfile$((imagenum + 1))},${weights_arr[imagenum]},32,Regular,1,1 ]" \\
-    done
-    # How many levels to repeat at each scale
-    for scale in {5..1}; do
-      shrink=$(calc "2^${octave}")
-      if ((${shrink} >= ${max_shrink})); then
-        shrinks+="${max_shrink}x"
+    for ((octave_padding; octave_padding >= 0; octave_padding--)); do
+      shrinks=""
+      smooths=""
+      iterations=""
+      echo --transform ${reg_types[((${octave} - 1 + ${octave_padding}))]} \\
+      for ((imagenum = 0; imagenum < number_of_image_pairs; imagenum++)); do
+        echo "--metric ${linear_metric}[ \${fixedfile$((imagenum + 1))},\${movingfile$((imagenum + 1))},${weights_arr[imagenum]},32,Regular,1,1 ]" \\
+      done
+      # How many levels to repeat at each scale
+      for scale in {5..1}; do
+        shrink=$(calc "2^${octave}")
+        if ((${shrink} >= ${max_shrink})); then
+          shrinks+="${max_shrink}x"
+        else
+          shrinks+="${shrink}x"
+        fi
+        # Compute the minimum safe blur for this octave
+        # https://discourse.itk.org/t/resampling-to-isotropic-signal-processing-theory/1403
+        sigma=$(calc "sqrt( ((${min_spacing}*${shrink})^2 - ${min_spacing}^2) /(2*sqrt(2*log(2)))^2)")
+        # Scale up the minium smoothing
+        smooths+=$(calc "${sigma} + ${sigma}*(${scale} - 1)*sqrt(0.5)")x
+        iterations+=$(calc "int(${final_iterations}*2^${octave})")x
+      done
+      if [[ ${octave} == 1 ]]; then
+        shrinks+="1"
+        smooths+=0.0
+        iterations+=${final_iterations}
+        echo '--masks [ ${fixedmask},${movingmask} ]' \\
       else
-        shrinks+="${shrink}x"
+        echo --masks [ NOMASK,NOMASK ] \\
       fi
-      # Compute the minimum safe blur for this octave
-      # https://discourse.itk.org/t/resampling-to-isotropic-signal-processing-theory/1403
-      sigma=$(calc "sqrt( ((${min_spacing}*${shrink})^2 - ${min_spacing}^2) /(2*sqrt(2*log(2)))^2)")
-      # Scale up the minium smoothing
-      smooths+=$(calc "${sigma} + ${sigma}*(${scale} - 1)*sqrt(0.5)")x
-      iterations+=$(calc "int(${final_iterations}*2^${octave})")x
+      echo --shrink-factors "${shrinks%%x}" \\
+      echo --smoothing-sigmas "${smooths%%x}mm" \\
+      echo --convergence [ "${iterations%%x}",${convergence},10 ]
     done
-    if [[ ${octave} == 1 ]]; then
-      shrinks+="1"
-      smooths+=0.0
-      iterations+=${final_iterations}
-      echo '--masks [ ${fixedmask},${movingmask} ]' \\
-    else
-      echo --masks [ NOMASK,NOMASK ] \\
-    fi
-    echo --shrink-factors "${shrinks%%x}" \\
-    echo --smoothing-sigmas "${smooths%%x}mm" \\
-    echo --convergence [ "${iterations%%x}",${convergence},10 ]
+    octave_padding=0
   done
 }
 
