@@ -984,10 +984,34 @@ fi
 
 if [[ ${_arg_mask_extract} == "on" && ${_arg_fixed_mask} != "NOMASK" && ${_arg_moving_mask} != "NOMASK" ]]; then
   info "Creating extracted versions of input files using masks"
+  
+  # Extract primary image pair
   ImageMath 3 ${tmpdir}/fixed_extracted.h5 m ${_arg_fixedfile} ${_arg_fixed_mask}
   ImageMath 3 ${tmpdir}/moving_extracted.h5 m ${_arg_movingfile} ${_arg_moving_mask}
   movingfile1=${tmpdir}/moving_extracted.h5
   fixedfile1=${tmpdir}/fixed_extracted.h5
+  
+  # Handle multispectral image pairs
+  i=0
+  while ((${i} < ${#_arg_fixed[@]})); do
+    idx=$((i + 2))
+    info "Extracting multispectral pair ${idx}"
+    
+    # Resample primary masks to multispectral image spaces
+    antsApplyTransforms -d 3 -i ${_arg_fixed_mask} -r ${_arg_fixed[i]} -n GenericLabel -o ${tmpdir}/fixed_mask_${idx}.h5
+    antsApplyTransforms -d 3 -i ${_arg_moving_mask} -r ${_arg_moving[i]} -n GenericLabel -o ${tmpdir}/moving_mask_${idx}.h5
+    
+    # Extract multispectral images using resampled masks
+    ImageMath 3 ${tmpdir}/fixed_extracted_${idx}.h5 m ${_arg_fixed[i]} ${tmpdir}/fixed_mask_${idx}.h5
+    ImageMath 3 ${tmpdir}/moving_extracted_${idx}.h5 m ${_arg_moving[i]} ${tmpdir}/moving_mask_${idx}.h5
+    
+    # Set up file variables for pyramid generation
+    declare "fixedfile${idx}=${tmpdir}/fixed_extracted_${idx}.h5"
+    declare "movingfile${idx}=${tmpdir}/moving_extracted_${idx}.h5"
+    
+    ((++i))
+  done
+  
   if [[ ${_arg_keep_mask_after_extract} = "off" ]]; then
     movingmask=NOMASK
     fixedmask=NOMASK
@@ -1225,7 +1249,10 @@ fi
 syn_metric="--metric $(grep -o -E '^[a-zA-Z]+' <<<${_arg_syn_metric})[ ${fixedfile1},${movingfile1},${_arg_weights[0]},$(grep -o -E '[0-9]+' <<<${_arg_syn_metric}),None,1,1 ]"
 i=0
 while ((i < ${#_arg_fixed[@]})); do
-  syn_metric+=" --metric $(grep -o -E '^[a-zA-Z]+' <<<${_arg_syn_metric})[ ${_arg_fixed[${i}]},${_arg_moving[${i}]},${_arg_weights[$((i + 1))]},$(grep -o -E '[0-9]+' <<<${_arg_syn_metric}),None,1,1 ]"
+  idx=$((i + 2))
+  curr_fixed="fixedfile${idx}"
+  curr_moving="movingfile${idx}"
+  syn_metric+=" --metric $(grep -o -E '^[a-zA-Z]+' <<<${_arg_syn_metric})[ ${!curr_fixed},${!curr_moving},${_arg_weights[$((i + 1))]},$(grep -o -E '[0-9]+' <<<${_arg_syn_metric}),None,1,1 ]"
   ((++i))
 done
 
