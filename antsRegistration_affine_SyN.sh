@@ -809,7 +809,7 @@ function make_affine_pyramid {
   local max_octave=$(round $(calc "log(${max_shrink})/log(2) + 0.55"))
 
   # If close is enabled, reduce the maximum scale
-  if [[ "$close" == "on" ]]; then
+  if [[ "$close" == "on" && ${max_octave} -gt 2 ]]; then
     max_octave=2
   fi
 
