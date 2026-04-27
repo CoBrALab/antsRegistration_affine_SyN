@@ -866,7 +866,7 @@ function make_affine_pyramid {
         # Compute the minimum safe blur for this octave
         # https://discourse.itk.org/t/resampling-to-isotropic-signal-processing-theory/1403
         sigma=$(calc "sqrt( ((${min_spacing}*${shrink})^2 - ${min_spacing}^2) /(2*sqrt(2*log(2)))^2)")
-        # Scale up the minium smoothing
+        # Scale up the minimum smoothing
         smooths+=$(calc "${sigma} + ${sigma}*(${scale} - 1)*sqrt(0.5)")x
         iterations+=$(calc "int(${final_iterations}*2^${octave})")x
       done
@@ -900,7 +900,7 @@ tmpdir=$(mktemp -d)
 
 ITK_GLOBAL_DEFAULT_NUMBER_OF_THREADS=${ITK_GLOBAL_DEFAULT_NUMBER_OF_THREADS:-${THREADS_PER_COMMAND:-${QBATCH_THREADS_PER_COMMAND:=$(nproc)}}}
 
-# Prefight check for required programs
+# Preflight check for required programs
 for program in ImageMath \
   ThresholdImage antsAI \
   antsApplyTransforms \
@@ -972,7 +972,7 @@ else
   _arg_float="--float 0"
 fi
 
-# Winzorise
+# Winsorize
 if [[ -n ${_arg_winsorize_image_intensities} ]]; then
   _arg_winsorize_image_intensities="--winsorize-image-intensities [ ${_arg_winsorize_image_intensities} ]"
 fi
@@ -1092,7 +1092,7 @@ fi
 fixed_minimum_resolution=$(PrintHeader ${fixedfile1} 1 | tr 'x' '\n' | sort -n | head -1)
 info "Minimum voxel dimension ${fixed_minimum_resolution} mm"
 
-# Calculate minium number of slices using the size of the fixed image
+# Calculate minimum number of slices using the size of the fixed image
 fixed_minimum_slices=$(PrintHeader ${fixedfile1} 2 | tr 'x' '\n' | sort -n | head -1)
 info "Minimum number of slices ${fixed_minimum_slices}"
 
