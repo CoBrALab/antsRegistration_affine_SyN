@@ -903,7 +903,9 @@ ITK_GLOBAL_DEFAULT_NUMBER_OF_THREADS=${ITK_GLOBAL_DEFAULT_NUMBER_OF_THREADS:-${T
 # Prefight check for required programs
 for program in ImageMath \
   ThresholdImage antsAI \
-  antsApplyTransforms; do
+  antsApplyTransforms \
+  antsRegistration \
+  PrintHeader; do
 
   if ! command -v ${program} &>/dev/null; then
     failure "Required program ${program} not found!"
@@ -937,6 +939,12 @@ elif [[ ("${_arg_movingfile}" == *mnc && "${_arg_fixedfile}" != *mnc) || ("${_ar
 else
   minc_mode=""
   output_linear_xfm="${_arg_outputbasename}0GenericAffine.mat"
+fi
+
+if [[ -n "${minc_mode}" ]]; then
+  if ! command -v param2xfm &>/dev/null; then
+    failure "Required program param2xfm not found (required for MINC mode)!"
+  fi
 fi
 
 #Enable verbosity
