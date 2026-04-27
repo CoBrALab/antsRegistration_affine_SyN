@@ -1042,11 +1042,6 @@ else
   fixedmask=${_arg_fixed_mask}
 fi
 
-if [[ (${fixedmask} == "NOMASK" || ${fixedmask} == "NULL") ]] &&
-  [[ (${movingmask} == "NOMASK" || ${movingmask} == "NULL") ]]; then
-  _no_masks="--no-masks"
-fi
-
 # Expand comma separated list into array
 IFS=', ' read -r -a _arg_initial_transform <<<"${_arg_initial_transform}"
 initial_transform=""
