@@ -1229,6 +1229,12 @@ info "Minimum voxel dimension ${fixed_minimum_resolution} mm"
 fixed_minimum_slices=$(PrintHeader ${fixedfile1} 2 | tr 'x' '\n' | sort -n | head -1)
 info "Minimum number of slices ${fixed_minimum_slices}"
 
+if [[ ${fixedmask} != "NOMASK" || ${movingmask} != "NOMASK" ]]; then
+  _arg_masked="--masked"
+else
+  _arg_masked=""
+fi
+
 if [[ -n ${_arg_linear_convergence} && -n ${_arg_linear_shrink_factors} && -n ${_arg_linear_smoothing_sigmas} ]]; then
   steps_linear=$(make_affine_pyramid \
     --number-of-image-pairs "$((${#_arg_fixed[@]} + 1))" \
@@ -1239,7 +1245,9 @@ if [[ -n ${_arg_linear_convergence} && -n ${_arg_linear_shrink_factors} && -n ${
     --linear-shrink-factors "${_arg_linear_shrink_factors}" \
     --linear-smoothing-sigmas "${_arg_linear_smoothing_sigmas}" \
     --linear-convergence "${_arg_linear_convergence}" \
-    --weights "$(printf '%s,' "${_arg_weights[@]}" | sed 's/,$//')")
+    --weights "$(printf '%s,' "${_arg_weights[@]}" | sed 's/,$//')" \
+    --fixed-image "${fixedfile1}" \
+    ${_arg_masked})
 else
   steps_linear=$(make_affine_pyramid \
     --min-spacing "${fixed_minimum_resolution}" \
@@ -1250,7 +1258,8 @@ else
     --reg-type "${_arg_linear_type}" \
     --linear-metric "${_arg_linear_metric}" \
     --weights "$(printf '%s,' "${_arg_weights[@]}" | sed 's/,$//')" \
-    ${_arg_rough:+--rough} ${_arg_close:+--close})
+    --fixed-image "${fixedfile1}" \
+    ${_arg_rough:+--rough} ${_arg_close:+--close} ${_arg_masked})
 fi
 
 if [[ -n ${_arg_syn_convergence} && -n ${_arg_syn_shrink_factors} && -n ${_arg_syn_smoothing_sigmas} ]]; then
