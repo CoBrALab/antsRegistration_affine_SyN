@@ -599,7 +599,7 @@ compute_mi_bins() {
         B_scott=$(awk -v N="$N_s" -v r="$range" -v sd="$sd" \
                   'BEGIN{
                       if (sd<=0) {print 999; exit}
-                      delta = 3.5*sd / (N**(1.0/3.0));
+                      delta = 3.5*sd / (N^(1.0/3.0));
                       b = r/delta;
                       printf "%d", (b == int(b)) ? b : int(b)+1
                   }')
