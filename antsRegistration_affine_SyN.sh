@@ -565,6 +565,106 @@ function debug() {
 function calc() { awk "BEGIN{ printf $* }"; }
 function round() { awk "BEGIN{ printf \"%.0f\", ($*) }"; }
 
+# Compute Mattes MI bin counts per shrink level for ANTs registration.
+# Usage:   compute_mi_bins <fixed_image> <shrink1> [shrink2 ...]
+# Echoes:  space-separated bin counts, one per shrink level, in input order.
+# Example: BINS=($(compute_mi_bins fixed.nii.gz 8 4 2 1))
+compute_mi_bins() {
+    local fixed="$1"; shift
+    local shrinks=("$@")
+
+    local alpha=20
+    local floor=16
+    local cap=64
+    local sampling_fraction=1.0
+
+    local out max sd dims V range
+    out=$(MeasureMinMaxMean 3 "$fixed")
+    max=$(echo "$out" | sed -n 's/.*Max : \[\([^]]*\)\].*/\1/p')
+    local min
+    min=$(echo "$out" | sed -n 's/.*Min : \[\([^]]*\)\].*/\1/p')
+    sd=$(echo  "$out" | sed -n 's/.*SD : \([0-9.eE+-]*\).*/\1/p')
+
+    dims=$(PrintHeader "$fixed" 2 | tr 'x' ' ')
+    V=$(echo "$dims" | awk '{print $1*$2*$3}')
+    range=$(awk -v mx="$max" -v mn="$min" 'BEGIN{print mx-mn}')
+
+    local s N_s B_stat B_scott B
+    local result=()
+    for s in "${shrinks[@]}"; do
+        N_s=$(awk -v V="$V" -v s="$s" -v f="$sampling_fraction" \
+              'BEGIN{print f*V/(s*s*s)}')
+        B_stat=$(awk -v N="$N_s" -v a="$alpha" \
+                 'BEGIN{print int(sqrt(N/a))}')
+        B_scott=$(awk -v N="$N_s" -v r="$range" -v sd="$sd" \
+                  'BEGIN{
+                      if (sd<=0) {print 999; exit}
+                      delta = 3.5*sd / (N^(1.0/3.0));
+                      b = r/delta;
+                      printf "%d", (b == int(b)) ? b : int(b)+1
+                  }')
+        B=$(awk -v a="$B_stat" -v b="$B_scott" 'BEGIN{print (a<b)?a:b}')
+        [ "$B" -lt "$floor" ] && B=$floor
+        [ "$B" -gt "$cap"   ] && B=$cap
+        result+=("$B")
+    done
+
+    echo "${result[@]}"
+}
+
+scale_space_params() {
+  local max_shrink=${1:-256}
+  local voxel_size=${2:-1.0}
+  local min_dim=$3
+  local implicit_fwhm=${4:-1.0}
+  local blurs_per_level=${5:-3}
+  local min_per_axis=16
+  local fwhm_to_sigma
+  fwhm_to_sigma=$(awk 'BEGIN{print 2 * sqrt(2 * log(2))}')
+
+  for ((n = 1; n <= max_shrink; n++)); do
+    if ((min_dim / n < min_per_axis)); then
+      break
+    fi
+
+    local sigma_lo sigma_hi
+    sigma_lo=$(echo "$n $implicit_fwhm $fwhm_to_sigma" | awk '{
+      sq = $1^2 - $2^2
+      print (sq > 0) ? sqrt(sq) / $3 : 0
+    }')
+    sigma_hi=$(echo "$n $implicit_fwhm $fwhm_to_sigma" | awk '{
+      sq = ($1+1)^2 - $2^2
+      print (sq > 0) ? sqrt(sq) / $3 : 0
+    }')
+
+    if ((blurs_per_level == 1)); then
+      local sigma_mm
+      if ((n == 1)); then
+        sigma_mm="0.0000"
+      else
+        sigma_mm=$(echo "$sigma_lo $voxel_size" | awk '{printf "%.4f", $1 * $2}')
+      fi
+      echo "$n $sigma_mm"
+    else
+      local k sigma_mm
+      for ((k = 0; k < blurs_per_level; k++)); do
+        if ((n == 1 && k == blurs_per_level - 1)); then
+          sigma_mm="0.0000"
+        else
+          sigma_mm=$(echo "$sigma_lo $sigma_hi $k $blurs_per_level $voxel_size" | awk '{
+            lo = ($1 > 0) ? $1 : 0.001
+            hi = ($2 > 0) ? $2 : 0.001
+            t = $3 / ($4 - 1)
+            sigma = hi * (lo/hi)^t
+            printf "%.4f", sigma * $5
+          }')
+        fi
+        echo "$n $sigma_mm"
+      done
+    fi
+  done
+}
+
 # Add handler for failure to show where things went wrong
 failure_handler() {
   local lineno=$2
@@ -580,21 +680,14 @@ failure_handler() {
 trap 'failure_handler "${BASH_LINENO[*]}" "$LINENO" "${FUNCNAME[*]:-script}" "$?" "$BASH_COMMAND"' ERR
 
 function make_syn_pyramid {
-  # Parse named arguments
   local min_spacing
   local min_length
   local convergence
   local final_iterations
   local rough="off"
   local close="off"
-  local shrinks
-  local smooths
-  local iterations
-  local min_octave=1
 
-  # Parse named arguments
   while [[ $# -gt 0 ]]; do
-    # Skip empty arguments
     [[ -z "$1" ]] && shift && continue
 
     case "$1" in
@@ -625,65 +718,55 @@ function make_syn_pyramid {
       shift
       ;;
     *)
-      # Only error if the argument isn't empty
       [[ -n "$1" ]] && echo "Error: Unknown option $1" >&2 && return 1
       shift
       ;;
     esac
   done
 
-  # Validate required parameters
   if [[ -z "$min_spacing" ]] || [[ -z "$min_length" ]] || [[ -z "$convergence" ]]; then
     echo "Error: Required parameters --min-spacing, --min-length, and --convergence must be provided" >&2
     return 1
   fi
 
-  # Calculate to guarantee at least 16 voxels on a side
-  local max_shrink=$(round $(calc "${min_length}/16"))
-  local max_octave=$(round $(calc "log(${max_shrink})/log(2) + 0.55"))
-
-  # If close is enabled, reduce the maximum scale
-  if [[ "$close" == "on" && ${max_octave} -gt 2 ]]; then
-    max_octave=2
+  local params
+  if [[ "$close" == "on" ]]; then
+    params=$(scale_space_params 4 "$min_spacing" "$min_length")
+  else
+    params=$(scale_space_params 256 "$min_spacing" "$min_length")
   fi
 
-  # If rough is enabled, skip the last octave (finest resolution)
   if [[ "$rough" == "on" ]]; then
-    min_octave=2
+    params=$(echo "$params" | awk '$1 > 2')
   fi
 
-  # How many downsample scales to go through
-  for ((octave = ${max_octave}; octave >= ${min_octave}; octave--)); do
-    # How many levels to repeat at each scale
-    for scale in {5..1}; do
-      shrink=$(calc "2^${octave}")
-      if ((${shrink} >= ${max_shrink})); then
-        shrinks+="${max_shrink}x"
-      else
-        shrinks+="${shrink}x"
-      fi
-      # Compute the minimum safe blur for this octave
-      # From https://discourse.itk.org/t/resampling-to-isotropic-signal-processing-theory/1403/14
-      sigma=$(calc "sqrt( ((${min_spacing}*${shrink})^2 - ${min_spacing}^2) /(2*sqrt(2*log(2)))^2)")
-      # Scale up the minimum smoothing
-      smooths+=$(calc "${sigma} + ${sigma}*(${scale} - 1)*sqrt(0.5)")x
-      iterations+=$(calc "int(${final_iterations}*(${octave} + 1)*sqrt(2))")x
-    done
+  if [[ -z "$params" ]]; then
+    echo "Error: No registration levels remain after rough filtering" >&2
+    return 1
+  fi
+
+  local unique_shrinks
+  unique_shrinks=$(echo "$params" | awk '{print $1}' | sort -nru)
+
+  local shrinks=""
+  local smooths=""
+  local iterations=""
+
+  for band_shrink in $unique_shrinks; do
+    while read -r sigma; do
+      [[ -z "$sigma" ]] && continue
+      shrinks+="${band_shrink}x"
+      smooths+="${sigma}x"
+      local iter
+      iter=$(round "${final_iterations} * ${band_shrink}^3")
+      ((iter > 3200)) && iter=3200
+      iterations+="${iter}x"
+    done <<< "$(echo "$params" | awk -v s="$band_shrink" '$1 == s {print $2}')"
   done
 
-  if [[ "$rough" == "off" ]]; then
-    shrinks+="1"
-    smooths+=0.0
-    iterations+=${final_iterations}
-  fi
-
-  shrinks="${shrinks%%x}"
-  smooths="${smooths%%x}mm"
-  iterations="${iterations%%x}"
-
-  echo --shrink-factors ${shrinks} \\
-  echo --smoothing-sigmas ${smooths} \\
-  echo --convergence [ ${iterations},${convergence},10 ]
+  echo --shrink-factors ${shrinks%x} \\
+  echo --smoothing-sigmas ${smooths%x}mm \\
+  echo --convergence [ ${iterations%x},${convergence},10 ]
 }
 
 function make_affine_pyramid {
@@ -694,20 +777,15 @@ function make_affine_pyramid {
   local final_iterations=50
   local rough="off"
   local close="off"
-  local min_octave=1
-  local shrinks
-  local smooths
-  local iterations
+  local masked="off"
+  local fixed_image
   local reg_type
-  local reg_types=()
   local weights_arg
   local weights_arr
   local linear_metric
   local linear_shrink_factors
   local linear_smoothing_sigmas
   local linear_convergence
-
-  # Parse named arguments
 
   while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -765,8 +843,15 @@ function make_affine_pyramid {
       linear_convergence="$2"
       shift 2
       ;;
+    --masked)
+      masked="on"
+      shift
+      ;;
+    --fixed-image)
+      fixed_image="$2"
+      shift 2
+      ;;
     *)
-      # ignore empty args
       [[ -z "$1" ]] && shift && continue
       echo "Error: Unknown option $1" >&2
       return 1
@@ -774,16 +859,13 @@ function make_affine_pyramid {
     esac
   done
 
-  # Parse weights into array (comma-separated string expected)
   if [[ -n "${weights_arg:-}" ]]; then
     IFS=',' read -r -a weights_arr <<<"${weights_arg}"
   else
     weights_arr=(1)
   fi
 
-  # If linear override args are supplied, emit a single-stage linear output
   if [[ -n "${linear_shrink_factors:-}" && -n "${linear_smoothing_sigmas:-}" && -n "${linear_convergence:-}" ]]; then
-    # decide transform type for this single linear stage
     local single_transform
     if [[ "${reg_type}" == "rigid" || "${reg_type}" == "lsq6" ]]; then
       single_transform='Rigid[ 0.1 ]'
@@ -793,96 +875,147 @@ function make_affine_pyramid {
       single_transform='Affine[ 0.1 ]'
     fi
 
+    local bins=32
+    if [[ "${linear_metric}" == "Mattes" && -n "${fixed_image:-}" ]]; then
+      IFS='x' read -r -a override_shrinks <<< "${linear_shrink_factors}"
+      local bin_arr
+      bin_arr=($(compute_mi_bins "${fixed_image}" "${override_shrinks[@]}"))
+      bins="${bin_arr[0]}"
+    fi
+
     echo --transform ${single_transform} \\
     for ((imagenum = 0; imagenum < number_of_image_pairs; imagenum++)); do
-      echo "--metric ${linear_metric}[ \${fixedfile$((imagenum + 1))},\${movingfile$((imagenum + 1))},${weights_arr[imagenum]:-1},32,Regular,1,1 ]" \\
+      echo "--metric ${linear_metric}[ \${fixedfile$((imagenum + 1))},\${movingfile$((imagenum + 1))},${weights_arr[imagenum]:-1},${bins},Regular,1,1 ]" \\
     done
-    echo '--masks [ ${fixedmask},${movingmask} ]' \\
     echo --shrink-factors "${linear_shrink_factors}" \\
     echo --smoothing-sigmas "${linear_smoothing_sigmas}" \\
     echo --convergence [ "${linear_convergence}",${convergence},10 ]
+    if [[ "$masked" == "on" ]]; then
+      echo '--masks [ ${fixedmask},${movingmask} ]'
+    fi
     return 0
   fi
 
-  # Calculate to guarantee at least 16 voxels on a side
-  local max_shrink=$(round $(calc "${min_length}/16"))
-  local max_octave=$(round $(calc "log(${max_shrink})/log(2) + 0.55"))
-
-  # If close is enabled, reduce the maximum scale
-  if [[ "$close" == "on" && ${max_octave} -gt 2 ]]; then
-    max_octave=2
+  local params
+  if [[ "$close" == "on" ]]; then
+    params=$(scale_space_params 4 "$min_spacing" "$min_length")
+  else
+    params=$(scale_space_params 256 "$min_spacing" "$min_length")
   fi
 
-  # If rough is enabled, skip the last octave (finest resolution)
   if [[ "$rough" == "on" ]]; then
-    min_octave=2
+    params=$(echo "$params" | awk '$1 > 2')
   fi
 
-  # Reversed list of stages to register
-  for ((octave = 0; octave < max_octave + 5; octave++)); do
-    if ((octave == 0)) || ((octave == 1)); then
-      if [[ "${reg_type}" == "rigid" || "${reg_type}" == "lsq6" ]]; then
-        reg_types+=("Rigid[ 0.1 ]")
-      elif [[ "${reg_type}" == "similarity" || "${reg_type}" == "lsq9" ]]; then
-        reg_types+=("Similarity[ 0.1 ]")
-      else
-        reg_types+=('Affine[ 0.1 ]')
-      fi
-    elif ((octave == 2)); then
-      if [[ "${reg_type}" == "rigid" || "${reg_type}" == "lsq6" ]]; then
-        reg_types+=('Rigid[ 0.1 ]')
-      else
-        reg_types+=('Similarity[ 0.1 ]')
-      fi
+  if [[ -z "$params" ]]; then
+    echo "Error: No registration levels remain after rough filtering" >&2
+    return 1
+  fi
+
+  local unique_shrinks
+  unique_shrinks=$(echo "$params" | awk '{print $1}' | sort -nu | tac)
+
+  local -a coarse_shrinks=()
+  local -a mid_shrinks=()
+  local -a fine_shrinks=()
+  for s in $unique_shrinks; do
+    if ((s > 4)); then
+      coarse_shrinks+=("$s")
+    elif ((s > 2)); then
+      mid_shrinks+=("$s")
     else
-      reg_types+=('Rigid[ 0.1 ]')
+      fine_shrinks+=("$s")
     fi
   done
 
-  if [[ ${max_octave} -lt 4 && ${close} == "off" ]]; then
-    octave_padding=$(calc 4 - ${max_octave})
-  else
-    octave_padding=0
+  local -a stage_transforms=()
+  local -a stage_masks=()
+  local -a stage_shrink_lists=()
+
+  if ((${#coarse_shrinks[@]} > 0)); then
+    stage_transforms+=("Rigid[ 0.1 ]")
+    stage_masks+=("no")
+    stage_shrink_lists+=("${coarse_shrinks[*]}")
   fi
 
-  # How many downsample scales to go through
-  for ((octave = max_octave; octave >= ${min_octave}; octave--)); do
-    for ((octave_padding; octave_padding >= 0; octave_padding--)); do
-      shrinks=""
-      smooths=""
-      iterations=""
-      echo --transform ${reg_types[((${octave} - 1 + ${octave_padding}))]} \\
-      for ((imagenum = 0; imagenum < number_of_image_pairs; imagenum++)); do
-        echo "--metric ${linear_metric}[ \${fixedfile$((imagenum + 1))},\${movingfile$((imagenum + 1))},${weights_arr[imagenum]},32,Regular,1,1 ]" \\
-      done
-      # How many levels to repeat at each scale
-      for scale in {5..1}; do
-        shrink=$(calc "2^${octave}")
-        if ((${shrink} >= ${max_shrink})); then
-          shrinks+="${max_shrink}x"
-        else
-          shrinks+="${shrink}x"
-        fi
-        # Compute the minimum safe blur for this octave
-        # https://discourse.itk.org/t/resampling-to-isotropic-signal-processing-theory/1403
-        sigma=$(calc "sqrt( ((${min_spacing}*${shrink})^2 - ${min_spacing}^2) /(2*sqrt(2*log(2)))^2)")
-        # Scale up the minimum smoothing
-        smooths+=$(calc "${sigma} + ${sigma}*(${scale} - 1)*sqrt(0.5)")x
-        iterations+=$(calc "int(${final_iterations}*2^${octave})")x
-      done
-      if [[ ${octave} == 1 ]]; then
-        shrinks+="1"
-        smooths+=0.0
-        iterations+=${final_iterations}
-        echo '--masks [ ${fixedmask},${movingmask} ]' \\
-      else
-        echo --masks [ NOMASK,NOMASK ] \\
-      fi
-      echo --shrink-factors "${shrinks%%x}" \\
-      echo --smoothing-sigmas "${smooths%%x}mm" \\
-      echo --convergence [ "${iterations%%x}",${convergence},10 ]
+  if ((${#mid_shrinks[@]} > 0)); then
+    if [[ "${reg_type}" == "rigid" || "${reg_type}" == "lsq6" ]]; then
+      stage_transforms+=("Rigid[ 0.1 ]")
+    else
+      stage_transforms+=("Similarity[ 0.1 ]")
+    fi
+    stage_masks+=("no")
+    stage_shrink_lists+=("${mid_shrinks[*]}")
+    if [[ "$masked" == "on" ]]; then
+      stage_transforms+=("${stage_transforms[-1]}")
+      stage_masks+=("yes")
+      stage_shrink_lists+=("${mid_shrinks[*]}")
+    fi
+  fi
+
+  if ((${#fine_shrinks[@]} > 0)); then
+    if [[ "${reg_type}" == "rigid" || "${reg_type}" == "lsq6" ]]; then
+      stage_transforms+=("Rigid[ 0.1 ]")
+    elif [[ "${reg_type}" == "similarity" || "${reg_type}" == "lsq9" ]]; then
+      stage_transforms+=("Similarity[ 0.1 ]")
+    else
+      stage_transforms+=("Affine[ 0.1 ]")
+    fi
+    stage_masks+=("yes")
+    stage_shrink_lists+=("${fine_shrinks[*]}")
+  fi
+
+  local -a stage_bins=()
+  if [[ "${linear_metric}" == "Mattes" && -n "${fixed_image:-}" ]]; then
+    local -a all_shrinks=($unique_shrinks)
+    local all_bins
+    all_bins=($(compute_mi_bins "${fixed_image}" "${all_shrinks[@]}"))
+    local -A bin_map=()
+    for ((j = 0; j < ${#all_shrinks[@]}; j++)); do
+      bin_map[${all_shrinks[j]}]=${all_bins[j]}
     done
-    octave_padding=0
+    for ((i = 0; i < ${#stage_transforms[@]}; i++)); do
+      local stage_shrink_arr=(${stage_shrink_lists[i]})
+      local max_s=${stage_shrink_arr[0]}
+      stage_bins+=("${bin_map[$max_s]}")
+    done
+  else
+    for ((i = 0; i < ${#stage_transforms[@]}; i++)); do
+      stage_bins+=("32")
+    done
+  fi
+
+  for ((i = 0; i < ${#stage_transforms[@]}; i++)); do
+    local shrinks=""
+    local smooths=""
+    local iterations=""
+
+    for s in ${stage_shrink_lists[i]}; do
+      while read -r sigma; do
+        [[ -z "$sigma" ]] && continue
+        shrinks+="${s}x"
+        smooths+="${sigma}x"
+        local iter
+        iter=$(round "${final_iterations} * ${s}^3")
+        ((iter > 3200)) && iter=3200
+        iterations+="${iter}x"
+      done <<< "$(echo "$params" | awk -v s="$s" '$1 == s {print $2}')"
+    done
+
+    echo --transform ${stage_transforms[i]} \\
+    for ((imagenum = 0; imagenum < number_of_image_pairs; imagenum++)); do
+      echo "--metric ${linear_metric}[ \${fixedfile$((imagenum + 1))},\${movingfile$((imagenum + 1))},${weights_arr[imagenum]},${stage_bins[i]},Regular,1,1 ]" \\
+    done
+    echo --shrink-factors "${shrinks%x}" \\
+    echo --smoothing-sigmas "${smooths%x}mm" \\
+    echo --convergence [ "${iterations%x}",${convergence},10 ]
+    if [[ "$masked" == "on" ]]; then
+      if [[ "${stage_masks[i]}" == "yes" ]]; then
+        echo '--masks [ ${fixedmask},${movingmask} ]'
+      else
+        echo --masks [ NOMASK,NOMASK ]
+      fi
+    fi
   done
 }
 
@@ -902,6 +1035,7 @@ ITK_GLOBAL_DEFAULT_NUMBER_OF_THREADS=${ITK_GLOBAL_DEFAULT_NUMBER_OF_THREADS:-${T
 
 # Preflight check for required programs
 for program in ImageMath \
+  MeasureMinMaxMean \
   ThresholdImage antsAI \
   antsApplyTransforms \
   antsRegistration \
@@ -1096,6 +1230,12 @@ info "Minimum voxel dimension ${fixed_minimum_resolution} mm"
 fixed_minimum_slices=$(PrintHeader ${fixedfile1} 2 | tr 'x' '\n' | sort -n | head -1)
 info "Minimum number of slices ${fixed_minimum_slices}"
 
+if [[ ${fixedmask} != "NOMASK" || ${movingmask} != "NOMASK" ]]; then
+  _arg_masked="--masked"
+else
+  _arg_masked=""
+fi
+
 if [[ -n ${_arg_linear_convergence} && -n ${_arg_linear_shrink_factors} && -n ${_arg_linear_smoothing_sigmas} ]]; then
   steps_linear=$(make_affine_pyramid \
     --number-of-image-pairs "$((${#_arg_fixed[@]} + 1))" \
@@ -1106,7 +1246,9 @@ if [[ -n ${_arg_linear_convergence} && -n ${_arg_linear_shrink_factors} && -n ${
     --linear-shrink-factors "${_arg_linear_shrink_factors}" \
     --linear-smoothing-sigmas "${_arg_linear_smoothing_sigmas}" \
     --linear-convergence "${_arg_linear_convergence}" \
-    --weights "$(printf '%s,' "${_arg_weights[@]}" | sed 's/,$//')")
+    --weights "$(printf '%s,' "${_arg_weights[@]}" | sed 's/,$//')" \
+    --fixed-image "${fixedfile1}" \
+    ${_arg_masked})
 else
   steps_linear=$(make_affine_pyramid \
     --min-spacing "${fixed_minimum_resolution}" \
@@ -1117,7 +1259,8 @@ else
     --reg-type "${_arg_linear_type}" \
     --linear-metric "${_arg_linear_metric}" \
     --weights "$(printf '%s,' "${_arg_weights[@]}" | sed 's/,$//')" \
-    ${_arg_rough:+--rough} ${_arg_close:+--close})
+    --fixed-image "${fixedfile1}" \
+    ${_arg_rough:+--rough} ${_arg_close:+--close} ${_arg_masked})
 fi
 
 if [[ -n ${_arg_syn_convergence} && -n ${_arg_syn_shrink_factors} && -n ${_arg_syn_smoothing_sigmas} ]]; then
