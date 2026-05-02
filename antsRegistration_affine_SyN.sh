@@ -680,21 +680,14 @@ failure_handler() {
 trap 'failure_handler "${BASH_LINENO[*]}" "$LINENO" "${FUNCNAME[*]:-script}" "$?" "$BASH_COMMAND"' ERR
 
 function make_syn_pyramid {
-  # Parse named arguments
   local min_spacing
   local min_length
   local convergence
   local final_iterations
   local rough="off"
   local close="off"
-  local shrinks
-  local smooths
-  local iterations
-  local min_octave=1
 
-  # Parse named arguments
   while [[ $# -gt 0 ]]; do
-    # Skip empty arguments
     [[ -z "$1" ]] && shift && continue
 
     case "$1" in
@@ -725,65 +718,55 @@ function make_syn_pyramid {
       shift
       ;;
     *)
-      # Only error if the argument isn't empty
       [[ -n "$1" ]] && echo "Error: Unknown option $1" >&2 && return 1
       shift
       ;;
     esac
   done
 
-  # Validate required parameters
   if [[ -z "$min_spacing" ]] || [[ -z "$min_length" ]] || [[ -z "$convergence" ]]; then
     echo "Error: Required parameters --min-spacing, --min-length, and --convergence must be provided" >&2
     return 1
   fi
 
-  # Calculate to guarantee at least 16 voxels on a side
-  local max_shrink=$(round $(calc "${min_length}/16"))
-  local max_octave=$(round $(calc "log(${max_shrink})/log(2) + 0.55"))
-
-  # If close is enabled, reduce the maximum scale
-  if [[ "$close" == "on" && ${max_octave} -gt 2 ]]; then
-    max_octave=2
+  local params
+  if [[ "$close" == "on" ]]; then
+    params=$(scale_space_params 4 "$min_spacing" "$min_length")
+  else
+    params=$(scale_space_params 256 "$min_spacing" "$min_length")
   fi
 
-  # If rough is enabled, skip the last octave (finest resolution)
   if [[ "$rough" == "on" ]]; then
-    min_octave=2
+    params=$(echo "$params" | awk '$1 > 2')
   fi
 
-  # How many downsample scales to go through
-  for ((octave = ${max_octave}; octave >= ${min_octave}; octave--)); do
-    # How many levels to repeat at each scale
-    for scale in {5..1}; do
-      shrink=$(calc "2^${octave}")
-      if ((${shrink} >= ${max_shrink})); then
-        shrinks+="${max_shrink}x"
-      else
-        shrinks+="${shrink}x"
-      fi
-      # Compute the minimum safe blur for this octave
-      # From https://discourse.itk.org/t/resampling-to-isotropic-signal-processing-theory/1403/14
-      sigma=$(calc "sqrt( ((${min_spacing}*${shrink})^2 - ${min_spacing}^2) /(2*sqrt(2*log(2)))^2)")
-      # Scale up the minimum smoothing
-      smooths+=$(calc "${sigma} + ${sigma}*(${scale} - 1)*sqrt(0.5)")x
-      iterations+=$(calc "int(${final_iterations}*(${octave} + 1)*sqrt(2))")x
-    done
+  if [[ -z "$params" ]]; then
+    echo "Error: No registration levels remain after rough filtering" >&2
+    return 1
+  fi
+
+  local unique_shrinks
+  unique_shrinks=$(echo "$params" | awk '{print $1}' | sort -nu | tac)
+
+  local shrinks=""
+  local smooths=""
+  local iterations=""
+
+  for band_shrink in $unique_shrinks; do
+    while read -r sigma; do
+      [[ -z "$sigma" ]] && continue
+      shrinks+="${band_shrink}x"
+      smooths+="${sigma}x"
+      local iter
+      iter=$(round "${final_iterations} * ${band_shrink}^3")
+      ((iter > 3200)) && iter=3200
+      iterations+="${iter}x"
+    done <<< "$(echo "$params" | awk -v s="$band_shrink" '$1 == s {print $2}')"
   done
 
-  if [[ "$rough" == "off" ]]; then
-    shrinks+="1"
-    smooths+=0.0
-    iterations+=${final_iterations}
-  fi
-
-  shrinks="${shrinks%%x}"
-  smooths="${smooths%%x}mm"
-  iterations="${iterations%%x}"
-
-  echo --shrink-factors ${shrinks} \\
-  echo --smoothing-sigmas ${smooths} \\
-  echo --convergence [ ${iterations},${convergence},10 ]
+  echo --shrink-factors ${shrinks%x} \\
+  echo --smoothing-sigmas ${smooths%x}mm \\
+  echo --convergence [ ${iterations%x},${convergence},10 ]
 }
 
 function make_affine_pyramid {
