@@ -746,7 +746,7 @@ function make_syn_pyramid {
   fi
 
   local unique_shrinks
-  unique_shrinks=$(echo "$params" | awk '{print $1}' | sort -nu | tac)
+  unique_shrinks=$(echo "$params" | awk '{print $1}' | sort -nru)
 
   local shrinks=""
   local smooths=""
