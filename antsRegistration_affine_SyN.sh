@@ -565,6 +565,106 @@ function debug() {
 function calc() { awk "BEGIN{ printf $* }"; }
 function round() { awk "BEGIN{ printf \"%.0f\", ($*) }"; }
 
+# Compute Mattes MI bin counts per shrink level for ANTs registration.
+# Usage:   compute_mi_bins <fixed_image> <shrink1> [shrink2 ...]
+# Echoes:  space-separated bin counts, one per shrink level, in input order.
+# Example: BINS=($(compute_mi_bins fixed.nii.gz 8 4 2 1))
+compute_mi_bins() {
+    local fixed="$1"; shift
+    local shrinks=("$@")
+
+    local alpha=20
+    local floor=16
+    local cap=64
+    local sampling_fraction=1.0
+
+    local out max sd dims V range
+    out=$(MeasureMinMaxMean 3 "$fixed")
+    max=$(echo "$out" | sed -n 's/.*Max : \[\([^]]*\)\].*/\1/p')
+    local min
+    min=$(echo "$out" | sed -n 's/.*Min : \[\([^]]*\)\].*/\1/p')
+    sd=$(echo  "$out" | sed -n 's/.*SD : \([0-9.eE+-]*\).*/\1/p')
+
+    dims=$(PrintHeader "$fixed" 2 | tr 'x' ' ')
+    V=$(echo "$dims" | awk '{print $1*$2*$3}')
+    range=$(awk -v mx="$max" -v mn="$min" 'BEGIN{print mx-mn}')
+
+    local s N_s B_stat B_scott B
+    local result=()
+    for s in "${shrinks[@]}"; do
+        N_s=$(awk -v V="$V" -v s="$s" -v f="$sampling_fraction" \
+              'BEGIN{print f*V/(s*s*s)}')
+        B_stat=$(awk -v N="$N_s" -v a="$alpha" \
+                 'BEGIN{print int(sqrt(N/a))}')
+        B_scott=$(awk -v N="$N_s" -v r="$range" -v sd="$sd" \
+                  'BEGIN{
+                      if (sd<=0) {print 999; exit}
+                      delta = 3.5*sd / (N**(1.0/3.0));
+                      b = r/delta;
+                      printf "%d", (b == int(b)) ? b : int(b)+1
+                  }')
+        B=$(awk -v a="$B_stat" -v b="$B_scott" 'BEGIN{print (a<b)?a:b}')
+        [ "$B" -lt "$floor" ] && B=$floor
+        [ "$B" -gt "$cap"   ] && B=$cap
+        result+=("$B")
+    done
+
+    echo "${result[@]}"
+}
+
+scale_space_params() {
+  local max_shrink=${1:-256}
+  local voxel_size=${2:-1.0}
+  local min_dim=$3
+  local implicit_fwhm=${4:-1.0}
+  local blurs_per_level=${5:-3}
+  local min_per_axis=16
+  local fwhm_to_sigma
+  fwhm_to_sigma=$(awk 'BEGIN{print 2 * sqrt(2 * log(2))}')
+
+  for ((n = 1; n <= max_shrink; n++)); do
+    if ((min_dim / n < min_per_axis)); then
+      break
+    fi
+
+    local sigma_lo sigma_hi
+    sigma_lo=$(echo "$n $implicit_fwhm $fwhm_to_sigma" | awk '{
+      sq = $1^2 - $2^2
+      print (sq > 0) ? sqrt(sq) / $3 : 0
+    }')
+    sigma_hi=$(echo "$n $implicit_fwhm $fwhm_to_sigma" | awk '{
+      sq = ($1+1)^2 - $2^2
+      print (sq > 0) ? sqrt(sq) / $3 : 0
+    }')
+
+    if ((blurs_per_level == 1)); then
+      local sigma_mm
+      if ((n == 1)); then
+        sigma_mm="0.0000"
+      else
+        sigma_mm=$(echo "$sigma_lo $voxel_size" | awk '{printf "%.4f", $1 * $2}')
+      fi
+      echo "$n $sigma_mm"
+    else
+      local k sigma_mm
+      for ((k = 0; k < blurs_per_level; k++)); do
+        if ((n == 1 && k == blurs_per_level - 1)); then
+          sigma_mm="0.0000"
+        else
+          sigma_mm=$(echo "$sigma_lo $sigma_hi $k $blurs_per_level $voxel_size" | awk '{
+            lo = ($1 > 0) ? $1 : 0.001
+            hi = ($2 > 0) ? $2 : 0.001
+            t = $3 / ($4 - 1)
+            sigma = hi * (lo/hi)^t
+            printf "%.4f", sigma * $5
+          }')
+        fi
+        echo "$n $sigma_mm"
+      done
+    fi
+  done
+}
+
 # Add handler for failure to show where things went wrong
 failure_handler() {
   local lineno=$2
