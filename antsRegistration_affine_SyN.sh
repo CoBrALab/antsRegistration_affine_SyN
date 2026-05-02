@@ -1035,6 +1035,7 @@ ITK_GLOBAL_DEFAULT_NUMBER_OF_THREADS=${ITK_GLOBAL_DEFAULT_NUMBER_OF_THREADS:-${T
 
 # Preflight check for required programs
 for program in ImageMath \
+  MeasureMinMaxMean \
   ThresholdImage antsAI \
   antsApplyTransforms \
   antsRegistration \
