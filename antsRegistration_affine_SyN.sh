@@ -6,6 +6,7 @@
 
 # ARG_OPTIONAL_SINGLE([moving-mask],[],[Mask for moving image],[NOMASK])
 # ARG_OPTIONAL_SINGLE([fixed-mask],[],[Mask for fixed image],[NOMASK])
+# ARG_OPTIONAL_BOOLEAN([mask-all-linear],[],[Use masks on all linear stages],[])
 # ARG_OPTIONAL_BOOLEAN([mask-extract],[],[Use masks to extract input images, only works with both images masked],[])
 # ARG_OPTIONAL_BOOLEAN([keep-mask-after-extract],[],[Keep using masks for metric after extraction],[off])
 
@@ -46,6 +47,8 @@
 
 # ARG_OPTIONAL_BOOLEAN([fast],[],[Run fast SyN registration, overrides syn-metric above with Mattes[32]])
 # ARG_OPTIONAL_BOOLEAN([float],[],[Calculate registration using float instead of double])
+# ARG_OPTIONAL_BOOLEAN([float-linear],[],[Calculate linear registration using float instead of double])
+# ARG_OPTIONAL_BOOLEAN([float-nonlinear],[],[Calculate nonlinear registration using float instead of double])
 
 # ARG_OPTIONAL_BOOLEAN([clobber],[c],[Overwrite files that already exist])
 # ARG_OPTIONAL_BOOLEAN([verbose],[v],[Run commands verbosely],[on])
@@ -57,7 +60,9 @@
 # Argbash is a bash code generator used to get arguments parsing right.
 # Argbash is FREE SOFTWARE, see https://argbash.dev for more info
 
-die() {
+
+die()
+{
   local _ret="${2:-1}"
   test "${_PRINT_HELP:-no}" = yes && print_help >&2
   echo "$1" >&2
@@ -66,15 +71,19 @@ die() {
 
 # validators
 
-lineargroup() {
-  local _allowed=("rigid" "lsq6" "similarity" "lsq9" "affine" "lsq12") _seeking="$1"
-  for element in "${_allowed[@]}"; do
-    test "$element" = "$_seeking" && echo "$element" && return 0
-  done
-  die "Value '$_seeking' (of argument '$2') doesn't match the list of allowed values: 'rigid', 'lsq6', 'similarity', 'lsq9', 'affine' and 'lsq12'" 4
+lineargroup()
+{
+	local _allowed=("rigid" "lsq6" "similarity" "lsq9" "affine" "lsq12") _seeking="$1"
+	for element in "${_allowed[@]}"
+	do
+		test "$element" = "$_seeking" && echo "$element" && return 0
+	done
+	die "Value '$_seeking' (of argument '$2') doesn't match the list of allowed values: 'rigid', 'lsq6', 'similarity', 'lsq9', 'affine' and 'lsq12'" 4
 }
 
-begins_with_short_option() {
+
+begins_with_short_option()
+{
   local first_option all_short_options='hocvd'
   first_option="${1:0:1}"
   test "$all_short_options" = "${all_short_options/$first_option/}" && return 1 || return 0
@@ -85,6 +94,7 @@ _positionals=()
 # THE DEFAULTS INITIALIZATION - OPTIONALS
 _arg_moving_mask="NOMASK"
 _arg_fixed_mask="NOMASK"
+_arg_mask_all_linear="off"
 _arg_mask_extract="off"
 _arg_keep_mask_after_extract="off"
 _arg_resampled_output=()
@@ -115,19 +125,24 @@ _arg_histogram_matching="off"
 _arg_winsorize_image_intensities=
 _arg_fast="off"
 _arg_float="off"
+_arg_float_linear="off"
+_arg_float_nonlinear="off"
 _arg_clobber="off"
 _arg_verbose="on"
 _arg_debug="off"
 
-print_help() {
+
+print_help()
+{
   printf '%s\n' "A wrapper around antsRegistration providing optimized registration pyramids"
-  printf 'Usage: %s [-h|--help] [--moving-mask <arg>] [--fixed-mask <arg>] [--(no-)mask-extract] [--(no-)keep-mask-after-extract] [-o|--resampled-output <arg>] [--resampled-linear-output <arg>] [--initial-transform <arg>] [--linear-type <LINEAR>] [--(no-)close] [--(no-)rough] [--fixed <arg>] [--moving <arg>] [--weights <arg>] [--convergence <arg>] [--(no-)skip-linear] [--linear-metric <arg>] [--linear-shrink-factors <arg>] [--linear-smoothing-sigmas <arg>] [--linear-convergence <arg>] [--final-iterations-linear <arg>] [--(no-)kmeans-transformed-linear] [--(no-)skip-nonlinear] [--syn-control <arg>] [--syn-metric <arg>] [--syn-shrink-factors <arg>] [--syn-smoothing-sigmas <arg>] [--syn-convergence <arg>] [--final-iterations-nonlinear <arg>] [--(no-)histogram-matching] [--winsorize-image-intensities <arg>] [--(no-)fast] [--(no-)float] [-c|--(no-)clobber] [-v|--(no-)verbose] [-d|--(no-)debug] <movingfile> <fixedfile> <outputbasename>\n' "$0"
+  printf 'Usage: %s [-h|--help] [--moving-mask <arg>] [--fixed-mask <arg>] [--(no-)mask-all-linear] [--(no-)mask-extract] [--(no-)keep-mask-after-extract] [-o|--resampled-output <arg>] [--resampled-linear-output <arg>] [--initial-transform <arg>] [--linear-type <LINEAR>] [--(no-)close] [--(no-)rough] [--fixed <arg>] [--moving <arg>] [--weights <arg>] [--convergence <arg>] [--(no-)skip-linear] [--linear-metric <arg>] [--linear-shrink-factors <arg>] [--linear-smoothing-sigmas <arg>] [--linear-convergence <arg>] [--final-iterations-linear <arg>] [--(no-)kmeans-transformed-linear] [--(no-)skip-nonlinear] [--syn-control <arg>] [--syn-metric <arg>] [--syn-shrink-factors <arg>] [--syn-smoothing-sigmas <arg>] [--syn-convergence <arg>] [--final-iterations-nonlinear <arg>] [--(no-)histogram-matching] [--winsorize-image-intensities <arg>] [--(no-)fast] [--(no-)float] [--(no-)float-linear] [--(no-)float-nonlinear] [-c|--(no-)clobber] [-v|--(no-)verbose] [-d|--(no-)debug] <movingfile> <fixedfile> <outputbasename>\n' "$(basename "$0")"
   printf '\t%s\n' "<movingfile>: The moving image"
   printf '\t%s\n' "<fixedfile>: The fixed image"
   printf '\t%s\n' "<outputbasename>: The basename for the output transforms"
   printf '\t%s\n' "-h, --help: Prints help"
   printf '\t%s\n' "--moving-mask: Mask for moving image (default: 'NOMASK')"
   printf '\t%s\n' "--fixed-mask: Mask for fixed image (default: 'NOMASK')"
+  printf '\t%s\n' "--mask-all-linear, --no-mask-all-linear: Use masks on all linear stages (off by default)"
   printf '\t%s\n' "--mask-extract, --no-mask-extract: Use masks to extract input images, only works with both images masked (off by default)"
   printf '\t%s\n' "--keep-mask-after-extract, --no-keep-mask-after-extract: Keep using masks for metric after extraction (off by default)"
   printf '\t%s\n' "-o, --resampled-output: Output resampled file(s), repeat for resampling multispectral outputs (empty by default)"
@@ -158,299 +173,324 @@ print_help() {
   printf '\t%s\n' "--winsorize-image-intensities: Winsorize data based on specified quantiles, comma separated lower,upper (no default)"
   printf '\t%s\n' "--fast, --no-fast: Run fast SyN registration, overrides syn-metric above with Mattes[32] (off by default)"
   printf '\t%s\n' "--float, --no-float: Calculate registration using float instead of double (off by default)"
+  printf '\t%s\n' "--float-linear, --no-float-linear: Calculate linear registration using float instead of double (off by default)"
+  printf '\t%s\n' "--float-nonlinear, --no-float-nonlinear: Calculate nonlinear registration using float instead of double (off by default)"
   printf '\t%s\n' "-c, --clobber, --no-clobber: Overwrite files that already exist (off by default)"
   printf '\t%s\n' "-v, --verbose, --no-verbose: Run commands verbosely (on by default)"
   printf '\t%s\n' "-d, --debug, --no-debug: Show all internal commands and logic for debug (off by default)"
 }
 
-parse_commandline() {
+
+parse_commandline()
+{
   _positionals_count=0
   local _key
-  while test $# -gt 0; do
+  while test $# -gt 0
+  do
     _key="$1"
     case "$_key" in
-    -h | --help)
-      print_help
-      exit 0
-      ;;
-    -h*)
-      print_help
-      exit 0
-      ;;
-    --moving-mask)
-      test $# -lt 2 && die "Missing value for the optional argument '$_key'." 1
-      _arg_moving_mask="$2"
-      shift
-      ;;
-    --moving-mask=*)
-      _arg_moving_mask="${_key##--moving-mask=}"
-      ;;
-    --fixed-mask)
-      test $# -lt 2 && die "Missing value for the optional argument '$_key'." 1
-      _arg_fixed_mask="$2"
-      shift
-      ;;
-    --fixed-mask=*)
-      _arg_fixed_mask="${_key##--fixed-mask=}"
-      ;;
-    --no-mask-extract | --mask-extract)
-      _arg_mask_extract="on"
-      test "${1:0:5}" = "--no-" && _arg_mask_extract="off"
-      ;;
-    --no-keep-mask-after-extract | --keep-mask-after-extract)
-      _arg_keep_mask_after_extract="on"
-      test "${1:0:5}" = "--no-" && _arg_keep_mask_after_extract="off"
-      ;;
-    -o | --resampled-output)
-      test $# -lt 2 && die "Missing value for the optional argument '$_key'." 1
-      _arg_resampled_output+=("$2")
-      shift
-      ;;
-    --resampled-output=*)
-      _arg_resampled_output+=("${_key##--resampled-output=}")
-      ;;
-    -o*)
-      _arg_resampled_output+=("${_key##-o}")
-      ;;
-    --resampled-linear-output)
-      test $# -lt 2 && die "Missing value for the optional argument '$_key'." 1
-      _arg_resampled_linear_output+=("$2")
-      shift
-      ;;
-    --resampled-linear-output=*)
-      _arg_resampled_linear_output+=("${_key##--resampled-linear-output=}")
-      ;;
-    --initial-transform)
-      test $# -lt 2 && die "Missing value for the optional argument '$_key'." 1
-      _arg_initial_transform="$2"
-      shift
-      ;;
-    --initial-transform=*)
-      _arg_initial_transform="${_key##--initial-transform=}"
-      ;;
-    --linear-type)
-      test $# -lt 2 && die "Missing value for the optional argument '$_key'." 1
-      _arg_linear_type="$(lineargroup "$2" "linear-type")" || exit 1
-      shift
-      ;;
-    --linear-type=*)
-      _arg_linear_type="$(lineargroup "${_key##--linear-type=}" "linear-type")" || exit 1
-      ;;
-    --no-close | --close)
-      _arg_close="on"
-      test "${1:0:5}" = "--no-" && _arg_close="off"
-      ;;
-    --no-rough | --rough)
-      _arg_rough="on"
-      test "${1:0:5}" = "--no-" && _arg_rough="off"
-      ;;
-    --fixed)
-      test $# -lt 2 && die "Missing value for the optional argument '$_key'." 1
-      _arg_fixed+=("$2")
-      shift
-      ;;
-    --fixed=*)
-      _arg_fixed+=("${_key##--fixed=}")
-      ;;
-    --moving)
-      test $# -lt 2 && die "Missing value for the optional argument '$_key'." 1
-      _arg_moving+=("$2")
-      shift
-      ;;
-    --moving=*)
-      _arg_moving+=("${_key##--moving=}")
-      ;;
-    --weights)
-      test $# -lt 2 && die "Missing value for the optional argument '$_key'." 1
-      _arg_weights="$2"
-      shift
-      ;;
-    --weights=*)
-      _arg_weights="${_key##--weights=}"
-      ;;
-    --convergence)
-      test $# -lt 2 && die "Missing value for the optional argument '$_key'." 1
-      _arg_convergence="$2"
-      shift
-      ;;
-    --convergence=*)
-      _arg_convergence="${_key##--convergence=}"
-      ;;
-    --no-skip-linear | --skip-linear)
-      _arg_skip_linear="on"
-      test "${1:0:5}" = "--no-" && _arg_skip_linear="off"
-      ;;
-    --linear-metric)
-      test $# -lt 2 && die "Missing value for the optional argument '$_key'." 1
-      _arg_linear_metric="$2"
-      shift
-      ;;
-    --linear-metric=*)
-      _arg_linear_metric="${_key##--linear-metric=}"
-      ;;
-    --linear-shrink-factors)
-      test $# -lt 2 && die "Missing value for the optional argument '$_key'." 1
-      _arg_linear_shrink_factors="$2"
-      shift
-      ;;
-    --linear-shrink-factors=*)
-      _arg_linear_shrink_factors="${_key##--linear-shrink-factors=}"
-      ;;
-    --linear-smoothing-sigmas)
-      test $# -lt 2 && die "Missing value for the optional argument '$_key'." 1
-      _arg_linear_smoothing_sigmas="$2"
-      shift
-      ;;
-    --linear-smoothing-sigmas=*)
-      _arg_linear_smoothing_sigmas="${_key##--linear-smoothing-sigmas=}"
-      ;;
-    --linear-convergence)
-      test $# -lt 2 && die "Missing value for the optional argument '$_key'." 1
-      _arg_linear_convergence="$2"
-      shift
-      ;;
-    --linear-convergence=*)
-      _arg_linear_convergence="${_key##--linear-convergence=}"
-      ;;
-    --final-iterations-linear)
-      test $# -lt 2 && die "Missing value for the optional argument '$_key'." 1
-      _arg_final_iterations_linear="$2"
-      shift
-      ;;
-    --final-iterations-linear=*)
-      _arg_final_iterations_linear="${_key##--final-iterations-linear=}"
-      ;;
-    --no-kmeans-transformed-linear | --kmeans-transformed-linear)
-      _arg_kmeans_transformed_linear="on"
-      test "${1:0:5}" = "--no-" && _arg_kmeans_transformed_linear="off"
-      ;;
-    --no-skip-nonlinear | --skip-nonlinear)
-      _arg_skip_nonlinear="on"
-      test "${1:0:5}" = "--no-" && _arg_skip_nonlinear="off"
-      ;;
-    --syn-control)
-      test $# -lt 2 && die "Missing value for the optional argument '$_key'." 1
-      _arg_syn_control="$2"
-      shift
-      ;;
-    --syn-control=*)
-      _arg_syn_control="${_key##--syn-control=}"
-      ;;
-    --syn-metric)
-      test $# -lt 2 && die "Missing value for the optional argument '$_key'." 1
-      _arg_syn_metric="$2"
-      shift
-      ;;
-    --syn-metric=*)
-      _arg_syn_metric="${_key##--syn-metric=}"
-      ;;
-    --syn-shrink-factors)
-      test $# -lt 2 && die "Missing value for the optional argument '$_key'." 1
-      _arg_syn_shrink_factors="$2"
-      shift
-      ;;
-    --syn-shrink-factors=*)
-      _arg_syn_shrink_factors="${_key##--syn-shrink-factors=}"
-      ;;
-    --syn-smoothing-sigmas)
-      test $# -lt 2 && die "Missing value for the optional argument '$_key'." 1
-      _arg_syn_smoothing_sigmas="$2"
-      shift
-      ;;
-    --syn-smoothing-sigmas=*)
-      _arg_syn_smoothing_sigmas="${_key##--syn-smoothing-sigmas=}"
-      ;;
-    --syn-convergence)
-      test $# -lt 2 && die "Missing value for the optional argument '$_key'." 1
-      _arg_syn_convergence="$2"
-      shift
-      ;;
-    --syn-convergence=*)
-      _arg_syn_convergence="${_key##--syn-convergence=}"
-      ;;
-    --final-iterations-nonlinear)
-      test $# -lt 2 && die "Missing value for the optional argument '$_key'." 1
-      _arg_final_iterations_nonlinear="$2"
-      shift
-      ;;
-    --final-iterations-nonlinear=*)
-      _arg_final_iterations_nonlinear="${_key##--final-iterations-nonlinear=}"
-      ;;
-    --no-histogram-matching | --histogram-matching)
-      _arg_histogram_matching="on"
-      test "${1:0:5}" = "--no-" && _arg_histogram_matching="off"
-      ;;
-    --winsorize-image-intensities)
-      test $# -lt 2 && die "Missing value for the optional argument '$_key'." 1
-      _arg_winsorize_image_intensities="$2"
-      shift
-      ;;
-    --winsorize-image-intensities=*)
-      _arg_winsorize_image_intensities="${_key##--winsorize-image-intensities=}"
-      ;;
-    --no-fast | --fast)
-      _arg_fast="on"
-      test "${1:0:5}" = "--no-" && _arg_fast="off"
-      ;;
-    --no-float | --float)
-      _arg_float="on"
-      test "${1:0:5}" = "--no-" && _arg_float="off"
-      ;;
-    -c | --no-clobber | --clobber)
-      _arg_clobber="on"
-      test "${1:0:5}" = "--no-" && _arg_clobber="off"
-      ;;
-    -c*)
-      _arg_clobber="on"
-      _next="${_key##-c}"
-      if test -n "$_next" -a "$_next" != "$_key"; then
-        { begins_with_short_option "$_next" && shift && set -- "-c" "-${_next}" "$@"; } || die "The short option '$_key' can't be decomposed to ${_key:0:2} and -${_key:2}, because ${_key:0:2} doesn't accept value and '-${_key:2:1}' doesn't correspond to a short option."
-      fi
-      ;;
-    -v | --no-verbose | --verbose)
-      _arg_verbose="on"
-      test "${1:0:5}" = "--no-" && _arg_verbose="off"
-      ;;
-    -v*)
-      _arg_verbose="on"
-      _next="${_key##-v}"
-      if test -n "$_next" -a "$_next" != "$_key"; then
-        { begins_with_short_option "$_next" && shift && set -- "-v" "-${_next}" "$@"; } || die "The short option '$_key' can't be decomposed to ${_key:0:2} and -${_key:2}, because ${_key:0:2} doesn't accept value and '-${_key:2:1}' doesn't correspond to a short option."
-      fi
-      ;;
-    -d | --no-debug | --debug)
-      _arg_debug="on"
-      test "${1:0:5}" = "--no-" && _arg_debug="off"
-      ;;
-    -d*)
-      _arg_debug="on"
-      _next="${_key##-d}"
-      if test -n "$_next" -a "$_next" != "$_key"; then
-        { begins_with_short_option "$_next" && shift && set -- "-d" "-${_next}" "$@"; } || die "The short option '$_key' can't be decomposed to ${_key:0:2} and -${_key:2}, because ${_key:0:2} doesn't accept value and '-${_key:2:1}' doesn't correspond to a short option."
-      fi
-      ;;
-    *)
-      _last_positional="$1"
-      _positionals+=("$_last_positional")
-      _positionals_count=$((_positionals_count + 1))
-      ;;
+      -h|--help)
+        print_help
+        exit 0
+        ;;
+      -h*)
+        print_help
+        exit 0
+        ;;
+      --moving-mask)
+        test $# -lt 2 && die "Missing value for the optional argument '$_key'." 1
+        _arg_moving_mask="$2"
+        shift
+        ;;
+      --moving-mask=*)
+        _arg_moving_mask="${_key##--moving-mask=}"
+        ;;
+      --fixed-mask)
+        test $# -lt 2 && die "Missing value for the optional argument '$_key'." 1
+        _arg_fixed_mask="$2"
+        shift
+        ;;
+      --fixed-mask=*)
+        _arg_fixed_mask="${_key##--fixed-mask=}"
+        ;;
+      --no-mask-all-linear|--mask-all-linear)
+        _arg_mask_all_linear="on"
+        test "${1:0:5}" = "--no-" && _arg_mask_all_linear="off"
+        ;;
+      --no-mask-extract|--mask-extract)
+        _arg_mask_extract="on"
+        test "${1:0:5}" = "--no-" && _arg_mask_extract="off"
+        ;;
+      --no-keep-mask-after-extract|--keep-mask-after-extract)
+        _arg_keep_mask_after_extract="on"
+        test "${1:0:5}" = "--no-" && _arg_keep_mask_after_extract="off"
+        ;;
+      -o|--resampled-output)
+        test $# -lt 2 && die "Missing value for the optional argument '$_key'." 1
+        _arg_resampled_output+=("$2")
+        shift
+        ;;
+      --resampled-output=*)
+        _arg_resampled_output+=("${_key##--resampled-output=}")
+        ;;
+      -o*)
+        _arg_resampled_output+=("${_key##-o}")
+        ;;
+      --resampled-linear-output)
+        test $# -lt 2 && die "Missing value for the optional argument '$_key'." 1
+        _arg_resampled_linear_output+=("$2")
+        shift
+        ;;
+      --resampled-linear-output=*)
+        _arg_resampled_linear_output+=("${_key##--resampled-linear-output=}")
+        ;;
+      --initial-transform)
+        test $# -lt 2 && die "Missing value for the optional argument '$_key'." 1
+        _arg_initial_transform="$2"
+        shift
+        ;;
+      --initial-transform=*)
+        _arg_initial_transform="${_key##--initial-transform=}"
+        ;;
+      --linear-type)
+        test $# -lt 2 && die "Missing value for the optional argument '$_key'." 1
+        _arg_linear_type="$(lineargroup "$2" "linear-type")" || exit 1
+        shift
+        ;;
+      --linear-type=*)
+        _arg_linear_type="$(lineargroup "${_key##--linear-type=}" "linear-type")" || exit 1
+        ;;
+      --no-close|--close)
+        _arg_close="on"
+        test "${1:0:5}" = "--no-" && _arg_close="off"
+        ;;
+      --no-rough|--rough)
+        _arg_rough="on"
+        test "${1:0:5}" = "--no-" && _arg_rough="off"
+        ;;
+      --fixed)
+        test $# -lt 2 && die "Missing value for the optional argument '$_key'." 1
+        _arg_fixed+=("$2")
+        shift
+        ;;
+      --fixed=*)
+        _arg_fixed+=("${_key##--fixed=}")
+        ;;
+      --moving)
+        test $# -lt 2 && die "Missing value for the optional argument '$_key'." 1
+        _arg_moving+=("$2")
+        shift
+        ;;
+      --moving=*)
+        _arg_moving+=("${_key##--moving=}")
+        ;;
+      --weights)
+        test $# -lt 2 && die "Missing value for the optional argument '$_key'." 1
+        _arg_weights="$2"
+        shift
+        ;;
+      --weights=*)
+        _arg_weights="${_key##--weights=}"
+        ;;
+      --convergence)
+        test $# -lt 2 && die "Missing value for the optional argument '$_key'." 1
+        _arg_convergence="$2"
+        shift
+        ;;
+      --convergence=*)
+        _arg_convergence="${_key##--convergence=}"
+        ;;
+      --no-skip-linear|--skip-linear)
+        _arg_skip_linear="on"
+        test "${1:0:5}" = "--no-" && _arg_skip_linear="off"
+        ;;
+      --linear-metric)
+        test $# -lt 2 && die "Missing value for the optional argument '$_key'." 1
+        _arg_linear_metric="$2"
+        shift
+        ;;
+      --linear-metric=*)
+        _arg_linear_metric="${_key##--linear-metric=}"
+        ;;
+      --linear-shrink-factors)
+        test $# -lt 2 && die "Missing value for the optional argument '$_key'." 1
+        _arg_linear_shrink_factors="$2"
+        shift
+        ;;
+      --linear-shrink-factors=*)
+        _arg_linear_shrink_factors="${_key##--linear-shrink-factors=}"
+        ;;
+      --linear-smoothing-sigmas)
+        test $# -lt 2 && die "Missing value for the optional argument '$_key'." 1
+        _arg_linear_smoothing_sigmas="$2"
+        shift
+        ;;
+      --linear-smoothing-sigmas=*)
+        _arg_linear_smoothing_sigmas="${_key##--linear-smoothing-sigmas=}"
+        ;;
+      --linear-convergence)
+        test $# -lt 2 && die "Missing value for the optional argument '$_key'." 1
+        _arg_linear_convergence="$2"
+        shift
+        ;;
+      --linear-convergence=*)
+        _arg_linear_convergence="${_key##--linear-convergence=}"
+        ;;
+      --final-iterations-linear)
+        test $# -lt 2 && die "Missing value for the optional argument '$_key'." 1
+        _arg_final_iterations_linear="$2"
+        shift
+        ;;
+      --final-iterations-linear=*)
+        _arg_final_iterations_linear="${_key##--final-iterations-linear=}"
+        ;;
+      --no-kmeans-transformed-linear|--kmeans-transformed-linear)
+        _arg_kmeans_transformed_linear="on"
+        test "${1:0:5}" = "--no-" && _arg_kmeans_transformed_linear="off"
+        ;;
+      --no-skip-nonlinear|--skip-nonlinear)
+        _arg_skip_nonlinear="on"
+        test "${1:0:5}" = "--no-" && _arg_skip_nonlinear="off"
+        ;;
+      --syn-control)
+        test $# -lt 2 && die "Missing value for the optional argument '$_key'." 1
+        _arg_syn_control="$2"
+        shift
+        ;;
+      --syn-control=*)
+        _arg_syn_control="${_key##--syn-control=}"
+        ;;
+      --syn-metric)
+        test $# -lt 2 && die "Missing value for the optional argument '$_key'." 1
+        _arg_syn_metric="$2"
+        shift
+        ;;
+      --syn-metric=*)
+        _arg_syn_metric="${_key##--syn-metric=}"
+        ;;
+      --syn-shrink-factors)
+        test $# -lt 2 && die "Missing value for the optional argument '$_key'." 1
+        _arg_syn_shrink_factors="$2"
+        shift
+        ;;
+      --syn-shrink-factors=*)
+        _arg_syn_shrink_factors="${_key##--syn-shrink-factors=}"
+        ;;
+      --syn-smoothing-sigmas)
+        test $# -lt 2 && die "Missing value for the optional argument '$_key'." 1
+        _arg_syn_smoothing_sigmas="$2"
+        shift
+        ;;
+      --syn-smoothing-sigmas=*)
+        _arg_syn_smoothing_sigmas="${_key##--syn-smoothing-sigmas=}"
+        ;;
+      --syn-convergence)
+        test $# -lt 2 && die "Missing value for the optional argument '$_key'." 1
+        _arg_syn_convergence="$2"
+        shift
+        ;;
+      --syn-convergence=*)
+        _arg_syn_convergence="${_key##--syn-convergence=}"
+        ;;
+      --final-iterations-nonlinear)
+        test $# -lt 2 && die "Missing value for the optional argument '$_key'." 1
+        _arg_final_iterations_nonlinear="$2"
+        shift
+        ;;
+      --final-iterations-nonlinear=*)
+        _arg_final_iterations_nonlinear="${_key##--final-iterations-nonlinear=}"
+        ;;
+      --no-histogram-matching|--histogram-matching)
+        _arg_histogram_matching="on"
+        test "${1:0:5}" = "--no-" && _arg_histogram_matching="off"
+        ;;
+      --winsorize-image-intensities)
+        test $# -lt 2 && die "Missing value for the optional argument '$_key'." 1
+        _arg_winsorize_image_intensities="$2"
+        shift
+        ;;
+      --winsorize-image-intensities=*)
+        _arg_winsorize_image_intensities="${_key##--winsorize-image-intensities=}"
+        ;;
+      --no-fast|--fast)
+        _arg_fast="on"
+        test "${1:0:5}" = "--no-" && _arg_fast="off"
+        ;;
+      --no-float|--float)
+        _arg_float="on"
+        test "${1:0:5}" = "--no-" && _arg_float="off"
+        ;;
+      --no-float-linear|--float-linear)
+        _arg_float_linear="on"
+        test "${1:0:5}" = "--no-" && _arg_float_linear="off"
+        ;;
+      --no-float-nonlinear|--float-nonlinear)
+        _arg_float_nonlinear="on"
+        test "${1:0:5}" = "--no-" && _arg_float_nonlinear="off"
+        ;;
+      -c|--no-clobber|--clobber)
+        _arg_clobber="on"
+        test "${1:0:5}" = "--no-" && _arg_clobber="off"
+        ;;
+      -c*)
+        _arg_clobber="on"
+        _next="${_key##-c}"
+        if test -n "$_next" -a "$_next" != "$_key"
+        then
+          { begins_with_short_option "$_next" && shift && set -- "-c" "-${_next}" "$@"; } || die "The short option '$_key' can't be decomposed to ${_key:0:2} and -${_key:2}, because ${_key:0:2} doesn't accept value and '-${_key:2:1}' doesn't correspond to a short option."
+        fi
+        ;;
+      -v|--no-verbose|--verbose)
+        _arg_verbose="on"
+        test "${1:0:5}" = "--no-" && _arg_verbose="off"
+        ;;
+      -v*)
+        _arg_verbose="on"
+        _next="${_key##-v}"
+        if test -n "$_next" -a "$_next" != "$_key"
+        then
+          { begins_with_short_option "$_next" && shift && set -- "-v" "-${_next}" "$@"; } || die "The short option '$_key' can't be decomposed to ${_key:0:2} and -${_key:2}, because ${_key:0:2} doesn't accept value and '-${_key:2:1}' doesn't correspond to a short option."
+        fi
+        ;;
+      -d|--no-debug|--debug)
+        _arg_debug="on"
+        test "${1:0:5}" = "--no-" && _arg_debug="off"
+        ;;
+      -d*)
+        _arg_debug="on"
+        _next="${_key##-d}"
+        if test -n "$_next" -a "$_next" != "$_key"
+        then
+          { begins_with_short_option "$_next" && shift && set -- "-d" "-${_next}" "$@"; } || die "The short option '$_key' can't be decomposed to ${_key:0:2} and -${_key:2}, because ${_key:0:2} doesn't accept value and '-${_key:2:1}' doesn't correspond to a short option."
+        fi
+        ;;
+      *)
+        _last_positional="$1"
+        _positionals+=("$_last_positional")
+        _positionals_count=$((_positionals_count + 1))
+        ;;
     esac
     shift
   done
 }
 
-handle_passed_args_count() {
+
+handle_passed_args_count()
+{
   local _required_args_string="'movingfile', 'fixedfile' and 'outputbasename'"
   test "${_positionals_count}" -ge 3 || _PRINT_HELP=yes die "FATAL ERROR: Not enough positional arguments - we require exactly 3 (namely: $_required_args_string), but got only ${_positionals_count}." 1
   test "${_positionals_count}" -le 3 || _PRINT_HELP=yes die "FATAL ERROR: There were spurious positional arguments --- we expect exactly 3 (namely: $_required_args_string), but got ${_positionals_count} (the last one was: '${_last_positional}')." 1
 }
 
-assign_positional_args() {
+
+assign_positional_args()
+{
   local _positional_name _shift_for=$1
   _positional_names="_arg_movingfile _arg_fixedfile _arg_outputbasename "
 
   shift "$_shift_for"
-  for _positional_name in ${_positional_names}; do
+  for _positional_name in ${_positional_names}
+  do
     test $# -gt 0 || break
     eval "$_positional_name=\${1}" || die "Error during argument parsing, possibly an Argbash bug." 1
     shift
@@ -463,6 +503,7 @@ assign_positional_args 1 "${_positionals[@]}"
 
 # OTHER STUFF GENERATED BY Argbash
 # Validation of values
+
 
 ### END OF CODE GENERATED BY Argbash (sortof) ### ])
 # [ <-- needed because of Argbash
@@ -778,6 +819,7 @@ function make_affine_pyramid {
   local rough="off"
   local close="off"
   local masked="off"
+  local mask_all="off"
   local fixed_image
   local reg_type
   local weights_arg
@@ -845,6 +887,10 @@ function make_affine_pyramid {
       ;;
     --masked)
       masked="on"
+      shift
+      ;;
+    --mask-all)
+      mask_all="on"
       shift
       ;;
     --fixed-image)
@@ -934,7 +980,7 @@ function make_affine_pyramid {
 
   if ((${#coarse_shrinks[@]} > 0)); then
     stage_transforms+=("Rigid[ 0.1 ]")
-    stage_masks+=("no")
+    stage_masks+=("$( [[ "$mask_all" == "on" ]] && echo yes || echo no )")
     stage_shrink_lists+=("${coarse_shrinks[*]}")
   fi
 
@@ -944,9 +990,9 @@ function make_affine_pyramid {
     else
       stage_transforms+=("Similarity[ 0.1 ]")
     fi
-    stage_masks+=("no")
+    stage_masks+=("$( [[ "$mask_all" == "on" ]] && echo yes || echo no )")
     stage_shrink_lists+=("${mid_shrinks[*]}")
-    if [[ "$masked" == "on" ]]; then
+    if [[ "$masked" == "on" && "$mask_all" == "off" ]]; then
       stage_transforms+=("${stage_transforms[-1]}")
       stage_masks+=("yes")
       stage_shrink_lists+=("${mid_shrinks[*]}")
@@ -1098,12 +1144,16 @@ else
 fi
 
 #Float mode switch for antsRegistration
-if [[ ${_arg_float} == "on" ]]; then
-  info "Calculations performed with float"
-  _arg_float="--float 1"
-else
-  info "Calculations performed with double"
-  _arg_float="--float 0"
+float_linear="--float 0"
+if [[ ${_arg_float} == "on" || ${_arg_float_linear} == "on" ]]; then
+  info "Linear calculations performed with float"
+  float_linear="--float 1"
+fi
+
+float_nonlinear="--float 0"
+if [[ ${_arg_float} == "on" || ${_arg_float_nonlinear} == "on" ]]; then
+  info "Nonlinear calculations performed with float"
+  float_nonlinear="--float 1"
 fi
 
 # Winsorize
@@ -1126,34 +1176,34 @@ fi
 
 if [[ ${_arg_mask_extract} == "on" && ${_arg_fixed_mask} != "NOMASK" && ${_arg_moving_mask} != "NOMASK" ]]; then
   info "Creating extracted versions of input files using masks"
-  
+
   # Extract primary image pair
   ImageMath 3 ${tmpdir}/fixed_extracted.h5 m ${_arg_fixedfile} ${_arg_fixed_mask}
   ImageMath 3 ${tmpdir}/moving_extracted.h5 m ${_arg_movingfile} ${_arg_moving_mask}
   movingfile1=${tmpdir}/moving_extracted.h5
   fixedfile1=${tmpdir}/fixed_extracted.h5
-  
+
   # Handle multispectral image pairs
   i=0
   while ((${i} < ${#_arg_fixed[@]})); do
     idx=$((i + 2))
     info "Extracting multispectral pair ${idx}"
-    
+
     # Resample primary masks to multispectral image spaces
     antsApplyTransforms -d 3 -i ${_arg_fixed_mask} -r ${_arg_fixed[i]} -n GenericLabel -o ${tmpdir}/fixed_mask_${idx}.h5
     antsApplyTransforms -d 3 -i ${_arg_moving_mask} -r ${_arg_moving[i]} -n GenericLabel -o ${tmpdir}/moving_mask_${idx}.h5
-    
+
     # Extract multispectral images using resampled masks
     ImageMath 3 ${tmpdir}/fixed_extracted_${idx}.h5 m ${_arg_fixed[i]} ${tmpdir}/fixed_mask_${idx}.h5
     ImageMath 3 ${tmpdir}/moving_extracted_${idx}.h5 m ${_arg_moving[i]} ${tmpdir}/moving_mask_${idx}.h5
-    
+
     # Set up file variables for pyramid generation
     declare "fixedfile${idx}=${tmpdir}/fixed_extracted_${idx}.h5"
     declare "movingfile${idx}=${tmpdir}/moving_extracted_${idx}.h5"
-    
+
     ((++i))
   done
-  
+
   if [[ ${_arg_keep_mask_after_extract} = "off" ]]; then
     movingmask=NOMASK
     fixedmask=NOMASK
@@ -1234,6 +1284,9 @@ if [[ ${fixedmask} != "NOMASK" || ${movingmask} != "NOMASK" ]]; then
   _arg_masked="--masked"
 else
   _arg_masked=""
+  if [[ ${_arg_mask_all_linear} == "on" ]]; then
+    warning "--mask-all-linear has no effect without fixed and moving masks"
+  fi
 fi
 
 if [[ -n ${_arg_linear_convergence} && -n ${_arg_linear_shrink_factors} && -n ${_arg_linear_smoothing_sigmas} ]]; then
@@ -1248,7 +1301,7 @@ if [[ -n ${_arg_linear_convergence} && -n ${_arg_linear_shrink_factors} && -n ${
     --linear-convergence "${_arg_linear_convergence}" \
     --weights "$(printf '%s,' "${_arg_weights[@]}" | sed 's/,$//')" \
     --fixed-image "${fixedfile1}" \
-    ${_arg_masked})
+    ${_arg_masked} ${_arg_mask_all_linear:+--mask-all})
 else
   steps_linear=$(make_affine_pyramid \
     --min-spacing "${fixed_minimum_resolution}" \
@@ -1260,7 +1313,7 @@ else
     --linear-metric "${_arg_linear_metric}" \
     --weights "$(printf '%s,' "${_arg_weights[@]}" | sed 's/,$//')" \
     --fixed-image "${fixedfile1}" \
-    ${_arg_rough:+--rough} ${_arg_close:+--close} ${_arg_masked})
+    ${_arg_rough:+--rough} ${_arg_close:+--close} ${_arg_masked} ${_arg_mask_all_linear:+--mask-all})
 fi
 
 if [[ -n ${_arg_syn_convergence} && -n ${_arg_syn_shrink_factors} && -n ${_arg_syn_smoothing_sigmas} ]]; then
@@ -1315,7 +1368,7 @@ if [[ ${_arg_skip_linear} == "off" ]]; then
     done
   fi
 
-  run_command="antsRegistration --dimensionality 3 ${_arg_verbose} ${minc_mode} ${_arg_float} \
+  run_command="antsRegistration --dimensionality 3 ${_arg_verbose} ${minc_mode} ${float_linear} \
     --output [ ${tmpdir}/$(basename ${_arg_outputbasename}) ] \
     --use-histogram-matching ${_arg_histogram_matching} \
     ${_arg_winsorize_image_intensities} \
@@ -1366,7 +1419,7 @@ fi
 # If requested, do linear resample
 if [[ ${_arg_resampled_linear_output[0]-} && ${_arg_skip_nonlinear} == "off" ]]; then
   info "Generating linear transform resampled output of ${_arg_movingfile} to $(basename ${_arg_resampled_linear_output[0]})"
-  antsApplyTransforms -d 3 ${_arg_float} ${_arg_verbose} --interpolation BSpline[5] \
+  antsApplyTransforms -d 3 ${float_linear} ${_arg_verbose} --interpolation BSpline[5] \
     -i ${_arg_movingfile} \
     -r ${_arg_fixedfile} \
     ${transform_stack[@]/#/--transform } \
@@ -1376,7 +1429,7 @@ if [[ ${_arg_resampled_linear_output[0]-} && ${_arg_skip_nonlinear} == "off" ]];
   i=1
   while ((i < ${#_arg_resampled_linear_output[@]})); do
     info "Generating linear transform resampled output of ${_arg_moving[i - 1]} to $(basename ${_arg_resampled_linear_output[i]})"
-    antsApplyTransforms -d 3 ${_arg_float} ${_arg_verbose} --interpolation BSpline[5] \
+    antsApplyTransforms -d 3 ${float_linear} ${_arg_verbose} --interpolation BSpline[5] \
       -i ${_arg_moving[i - 1]} \
       -r ${_arg_fixed[i - 1]} \
       ${transform_stack[@]/#/--transform } \
@@ -1403,7 +1456,7 @@ while ((i < ${#_arg_fixed[@]})); do
 done
 
 if [[ ${_arg_skip_nonlinear} == "off" ]]; then
-  run_command="antsRegistration --dimensionality 3 ${_arg_verbose} ${minc_mode} ${_arg_float} \
+  run_command="antsRegistration --dimensionality 3 ${_arg_verbose} ${minc_mode} ${float_nonlinear} \
     --output [ ${tmpdir}/$(basename ${_arg_outputbasename}) ] \
     --use-histogram-matching ${_arg_histogram_matching} \
     ${_arg_winsorize_image_intensities} \
@@ -1429,7 +1482,7 @@ cp -f ${tmpdir}/$(basename ${_arg_outputbasename})* $(dirname ${_arg_outputbasen
 
 if [[ ${_arg_resampled_output[0]-} ]]; then
   info "Generating final resampled output of ${_arg_movingfile} to $(basename ${_arg_resampled_output[0]})"
-  antsApplyTransforms -d 3 ${_arg_float} ${_arg_verbose} --interpolation BSpline[5] \
+  antsApplyTransforms -d 3 ${float_nonlinear} ${_arg_verbose} --interpolation BSpline[5] \
     -i ${_arg_movingfile} \
     -r ${_arg_fixedfile} \
     ${transform_stack[@]/#/--transform } \
@@ -1441,7 +1494,7 @@ if [[ ${_arg_resampled_output[0]-} ]]; then
   i=1
   while ((i < ${#_arg_resampled_output[@]})); do
     info "Generating final resampled output of ${_arg_moving[i - 1]} to $(basename ${_arg_resampled_output[i]})"
-    antsApplyTransforms -d 3 ${_arg_float} ${_arg_verbose} --interpolation BSpline[5] \
+    antsApplyTransforms -d 3 ${float_nonlinear} ${_arg_verbose} --interpolation BSpline[5] \
       -i ${_arg_moving[i - 1]} \
       -r ${_arg_fixed[i - 1]} \
       ${transform_stack[@]/#/--transform } \
