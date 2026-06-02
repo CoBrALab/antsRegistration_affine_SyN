@@ -45,6 +45,9 @@
 # ARG_OPTIONAL_BOOLEAN([histogram-matching],[],[Enable histogram matching],[])
 # ARG_OPTIONAL_SINGLE([winsorize-image-intensities],[],[Winsorize data based on specified quantiles, comma separated lower,upper],[])
 
+# ARG_OPTIONAL_BOOLEAN([reproducibility],[],[Use reproducible registration: GC metric for linear stages and fixed random seed],[])
+# ARG_OPTIONAL_SINGLE([random-seed],[],[Random seed for registration (default: 1 with --reproducibility)],[default])
+
 # ARG_OPTIONAL_BOOLEAN([fast],[],[Run fast SyN registration, overrides syn-metric above with Mattes[32]])
 # ARG_OPTIONAL_BOOLEAN([float],[],[Calculate registration using float instead of double])
 # ARG_OPTIONAL_BOOLEAN([float-linear],[],[Calculate linear registration using float instead of double])
@@ -123,6 +126,8 @@ _arg_syn_convergence=
 _arg_final_iterations_nonlinear="20"
 _arg_histogram_matching="off"
 _arg_winsorize_image_intensities=
+_arg_reproducibility="off"
+_arg_random_seed="default"
 _arg_fast="off"
 _arg_float="off"
 _arg_float_linear="off"
@@ -135,7 +140,7 @@ _arg_debug="off"
 print_help()
 {
   printf '%s\n' "A wrapper around antsRegistration providing optimized registration pyramids"
-  printf 'Usage: %s [-h|--help] [--moving-mask <arg>] [--fixed-mask <arg>] [--(no-)mask-all-linear] [--(no-)mask-extract] [--(no-)keep-mask-after-extract] [-o|--resampled-output <arg>] [--resampled-linear-output <arg>] [--initial-transform <arg>] [--linear-type <LINEAR>] [--(no-)close] [--(no-)rough] [--fixed <arg>] [--moving <arg>] [--weights <arg>] [--convergence <arg>] [--(no-)skip-linear] [--linear-metric <arg>] [--linear-shrink-factors <arg>] [--linear-smoothing-sigmas <arg>] [--linear-convergence <arg>] [--final-iterations-linear <arg>] [--(no-)kmeans-transformed-linear] [--(no-)skip-nonlinear] [--syn-control <arg>] [--syn-metric <arg>] [--syn-shrink-factors <arg>] [--syn-smoothing-sigmas <arg>] [--syn-convergence <arg>] [--final-iterations-nonlinear <arg>] [--(no-)histogram-matching] [--winsorize-image-intensities <arg>] [--(no-)fast] [--(no-)float] [--(no-)float-linear] [--(no-)float-nonlinear] [-c|--(no-)clobber] [-v|--(no-)verbose] [-d|--(no-)debug] <movingfile> <fixedfile> <outputbasename>\n' "$(basename "$0")"
+  printf 'Usage: %s [-h|--help] [--moving-mask <arg>] [--fixed-mask <arg>] [--(no-)mask-all-linear] [--(no-)mask-extract] [--(no-)keep-mask-after-extract] [-o|--resampled-output <arg>] [--resampled-linear-output <arg>] [--initial-transform <arg>] [--linear-type <LINEAR>] [--(no-)close] [--(no-)rough] [--fixed <arg>] [--moving <arg>] [--weights <arg>] [--convergence <arg>] [--(no-)skip-linear] [--linear-metric <arg>] [--linear-shrink-factors <arg>] [--linear-smoothing-sigmas <arg>] [--linear-convergence <arg>] [--final-iterations-linear <arg>] [--(no-)kmeans-transformed-linear] [--(no-)skip-nonlinear] [--syn-control <arg>] [--syn-metric <arg>] [--syn-shrink-factors <arg>] [--syn-smoothing-sigmas <arg>] [--syn-convergence <arg>] [--final-iterations-nonlinear <arg>] [--(no-)histogram-matching] [--winsorize-image-intensities <arg>] [--(no-)reproducibility] [--random-seed <arg>] [--(no-)fast] [--(no-)float] [--(no-)float-linear] [--(no-)float-nonlinear] [-c|--(no-)clobber] [-v|--(no-)verbose] [-d|--(no-)debug] <movingfile> <fixedfile> <outputbasename>\n' "$(basename "$0")"
   printf '\t%s\n' "<movingfile>: The moving image"
   printf '\t%s\n' "<fixedfile>: The fixed image"
   printf '\t%s\n' "<outputbasename>: The basename for the output transforms"
@@ -171,6 +176,8 @@ print_help()
   printf '\t%s\n' "--final-iterations-nonlinear: Maximum iterations at finest scale for non-linear automatic generation (default: '20')"
   printf '\t%s\n' "--histogram-matching, --no-histogram-matching: Enable histogram matching (off by default)"
   printf '\t%s\n' "--winsorize-image-intensities: Winsorize data based on specified quantiles, comma separated lower,upper (no default)"
+  printf '\t%s\n' "--reproducibility, --no-reproducibility: Use reproducible registration: GC metric for linear stages and fixed random seed (off by default)"
+  printf '\t%s\n' "--random-seed: Random seed for registration (default: 1 with --reproducibility) (default: 'default')"
   printf '\t%s\n' "--fast, --no-fast: Run fast SyN registration, overrides syn-metric above with Mattes[32] (off by default)"
   printf '\t%s\n' "--float, --no-float: Calculate registration using float instead of double (off by default)"
   printf '\t%s\n' "--float-linear, --no-float-linear: Calculate linear registration using float instead of double (off by default)"
@@ -412,6 +419,18 @@ parse_commandline()
       --winsorize-image-intensities=*)
         _arg_winsorize_image_intensities="${_key##--winsorize-image-intensities=}"
         ;;
+      --no-reproducibility|--reproducibility)
+        _arg_reproducibility="on"
+        test "${1:0:5}" = "--no-" && _arg_reproducibility="off"
+        ;;
+      --random-seed)
+        test $# -lt 2 && die "Missing value for the optional argument '$_key'." 1
+        _arg_random_seed="$2"
+        shift
+        ;;
+      --random-seed=*)
+        _arg_random_seed="${_key##--random-seed=}"
+        ;;
       --no-fast|--fast)
         _arg_fast="on"
         test "${1:0:5}" = "--no-" && _arg_fast="off"
@@ -510,6 +529,23 @@ assign_positional_args 1 "${_positionals[@]}"
 
 set -uo pipefail
 set -eE -o functrace
+
+if [[ "${_arg_random_seed}" == "default" && -n "${ANTS_RANDOM_SEED:-}" ]]; then
+  _arg_random_seed="${ANTS_RANDOM_SEED}"
+fi
+if [[ "${_arg_reproducibility}" == "on" ]]; then
+  _arg_linear_metric="GC"
+  if [[ "${_arg_random_seed}" == "default" ]]; then
+    _arg_random_seed="1"
+  fi
+fi
+if [[ "${_arg_random_seed}" == "default" ]]; then
+  _arg_random_seed="0"
+fi
+_random_seed_arg=""
+if [[ "${_arg_random_seed}" != "0" ]]; then
+  _random_seed_arg="--random-seed ${_arg_random_seed}"
+fi
 
 ### BASH HELPER FUNCTIONS ###
 # Stolen from https://github.com/kvz/bash3boilerplate
@@ -1373,6 +1409,7 @@ if [[ ${_arg_skip_linear} == "off" ]]; then
     --use-histogram-matching ${_arg_histogram_matching} \
     ${_arg_winsorize_image_intensities} \
     ${initial_transform} \
+    ${_random_seed_arg} \
     $(eval echo ${steps_linear})"
   debug "Linear registration command"
   debug "$(tr -s "[:blank:]" <<<${run_command})"
@@ -1464,6 +1501,7 @@ if [[ ${_arg_skip_nonlinear} == "off" ]]; then
     --transform SyN[ ${_arg_syn_control} ] \
     ${syn_metric} \
     $(eval echo ${steps_syn}) \
+    ${_random_seed_arg} \
     --masks [ ${fixedmask},${movingmask} ]"
   debug "Non-linear registration command"
   debug "$(tr -s "[:blank:]" <<<${run_command})"
