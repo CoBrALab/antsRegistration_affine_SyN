@@ -726,6 +726,33 @@ image_geometry() {
   }'
 }
 
+# Prints the geometric mean of the foreground bounding-box extents (mm) of an image.
+# Uses the mask when one is given, otherwise the largest component of a four-threshold
+# Otsu foreground inside the nonzero voxels.
+object_extent() {
+  local image=$1
+  local mask=${2:-NOMASK}
+  local fg="${tmpdir}/object_extent_$$.h5"
+  local nonzero="${tmpdir}/object_extent_nonzero_$$.h5"
+  if [[ -s "${mask}" ]]; then
+    ThresholdImage 3 "${mask}" "${fg}" 1e-12 Inf 1 0 >/dev/null
+  else
+    ThresholdImage 3 "${image}" "${nonzero}" 1e-12 Inf 1 0 >/dev/null
+    ThresholdImage 3 "${image}" "${fg}" Otsu 4 "${nonzero}" >/dev/null
+    ThresholdImage 3 "${fg}" "${fg}" 1.5 Inf 1 0 >/dev/null
+    ImageMath 3 "${fg}" GetLargestComponent "${fg}" >/dev/null
+  fi
+  local spacing bbox
+  spacing=$(PrintHeader "${fg}" 1 | tr 'x' ' ')
+  bbox=$(LabelGeometryMeasures 3 "${fg}" 2>/dev/null | sed -n 2p | grep -o '\[[^]]*\]$' | tr -d '[],')
+  rm -f "${fg}" "${nonzero}"
+  awk -v sp="$spacing" -v bb="$bbox" 'BEGIN{
+    split(sp, s, " "); n = split(bb, b, " ")
+    if (n != 6) { print "NA"; exit }
+    printf "%.2f", ((b[4] - b[1] + 1) * s[1] * (b[5] - b[2] + 1) * s[2] * (b[6] - b[3] + 1) * s[3])^(1/3)
+  }'
+}
+
 # Add handler for failure to show where things went wrong
 failure_handler() {
   local lineno=$2
@@ -1104,6 +1131,7 @@ ITK_GLOBAL_DEFAULT_NUMBER_OF_THREADS=${ITK_GLOBAL_DEFAULT_NUMBER_OF_THREADS:-${T
 # Preflight check for required programs
 for program in ImageMath \
   MeasureMinMaxMean \
+  LabelGeometryMeasures \
   ThresholdImage antsAI \
   antsApplyTransforms \
   antsRegistration \
@@ -1299,10 +1327,20 @@ read -r fixed_minimum_resolution fixed_minimum_extent < <(image_geometry "${fixe
 read -r moving_minimum_resolution moving_minimum_extent < <(image_geometry "${movingfile1}")
 info "Minimum voxel dimension ${fixed_minimum_resolution} mm (fixed), ${moving_minimum_resolution} mm (moving)"
 
-# Finest useful scale is the coarser image's voxel. Coarsest scale keeps at least
-# 16 samples along the smallest axis of the smaller field of view. Both in fixed voxels.
+# Finest useful scale is the coarser image's voxel. Coarsest scale keeps 16 samples
+# across the foreground object (geometric mean of its bounding box), bounded by 16
+# samples per axis of the fixed field of view. Both in fixed voxels.
 min_fwhm=$(awk -v m="${moving_minimum_resolution}" -v f="${fixed_minimum_resolution}" 'BEGIN{ r = m / f; printf "%.4f", (r > 1) ? r : 1 }')
-max_fwhm=$(awk -v a="${fixed_minimum_extent}" -v b="${moving_minimum_extent}" -v f="${fixed_minimum_resolution}" 'BEGIN{ printf "%.4f", ((a < b) ? a : b) / (16 * f) }')
+fixed_object_extent=$(object_extent "${fixedfile1}" "${_arg_fixed_mask}")
+moving_object_extent=$(object_extent "${movingfile1}" "${_arg_moving_mask}")
+if [[ "${fixed_object_extent}" == "NA" || "${moving_object_extent}" == "NA" ]]; then
+  warning "Foreground object not found, using the field of view for the coarsest scale"
+  fixed_object_extent=${fixed_minimum_extent}
+  moving_object_extent=${moving_minimum_extent}
+fi
+info "Foreground object extent ${fixed_object_extent} mm (fixed), ${moving_object_extent} mm (moving)"
+max_fwhm=$(awk -v a="${fixed_object_extent}" -v b="${moving_object_extent}" -v c="${fixed_minimum_extent}" -v f="${fixed_minimum_resolution}" \
+  'BEGIN{ e = a; if (b < e) e = b; if (c < e) e = c; printf "%.4f", e / (16 * f) }')
 info "Scale range ${min_fwhm} to ${max_fwhm} fixed voxels FWHM"
 
 if [[ ${fixedmask} != "NOMASK" || ${movingmask} != "NOMASK" ]]; then
