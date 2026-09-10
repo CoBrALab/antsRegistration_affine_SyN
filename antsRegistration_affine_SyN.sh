@@ -530,23 +530,6 @@ assign_positional_args 1 "${_positionals[@]}"
 set -uo pipefail
 set -eE -o functrace
 
-if [[ "${_arg_random_seed}" == "default" && -n "${ANTS_RANDOM_SEED:-}" ]]; then
-  _arg_random_seed="${ANTS_RANDOM_SEED}"
-fi
-if [[ "${_arg_reproducibility}" == "on" ]]; then
-  _arg_linear_metric="GC"
-  if [[ "${_arg_random_seed}" == "default" ]]; then
-    _arg_random_seed="1"
-  fi
-fi
-if [[ "${_arg_random_seed}" == "default" ]]; then
-  _arg_random_seed="0"
-fi
-_random_seed_arg=""
-if [[ "${_arg_random_seed}" != "0" ]]; then
-  _random_seed_arg="--random-seed ${_arg_random_seed}"
-fi
-
 ### BASH HELPER FUNCTIONS ###
 # Stolen from https://github.com/kvz/bash3boilerplate
 
@@ -1114,6 +1097,26 @@ trap finish EXIT
 tmpdir=$(mktemp -d)
 
 ITK_GLOBAL_DEFAULT_NUMBER_OF_THREADS=${ITK_GLOBAL_DEFAULT_NUMBER_OF_THREADS:-${THREADS_PER_COMMAND:-${QBATCH_THREADS_PER_COMMAND:=$(nproc)}}}
+
+if [[ "${_arg_random_seed}" == "default" && -n "${ANTS_RANDOM_SEED:-}" ]]; then
+  _arg_random_seed="${ANTS_RANDOM_SEED}"
+fi
+if [[ "${_arg_reproducibility}" == "on" ]]; then
+  if [[ "${_arg_linear_metric}" != "GC" ]]; then
+    warning "--reproducibility replaces linear metric ${_arg_linear_metric} with GC, which is a poor choice for cross-modal image pairs"
+  fi
+  _arg_linear_metric="GC"
+  if [[ "${_arg_random_seed}" == "default" ]]; then
+    _arg_random_seed="1"
+  fi
+fi
+if [[ "${_arg_random_seed}" == "default" ]]; then
+  _arg_random_seed="0"
+fi
+_random_seed_arg=""
+if [[ "${_arg_random_seed}" != "0" ]]; then
+  _random_seed_arg="--random-seed ${_arg_random_seed}"
+fi
 
 # Preflight check for required programs
 for program in ImageMath \
