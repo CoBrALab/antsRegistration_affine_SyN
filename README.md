@@ -9,7 +9,7 @@ A wrapper script around ANTs' `antsRegistration` tool that provides optimized re
 - Combined affine and SyN (non-linear) registration in a single command
 - Support for both MINC and NIFTI file formats
 - Automatic generation of multi-resolution pyramids based on image properties:
-  - scales step geometrically, four levels per octave, from the coarser voxel of the two images up to the scale that keeps 16 samples along the smallest axis of the smaller field of view
+  - scales step geometrically, four levels per octave, from the coarser voxel of the two images up to one sixteenth of the foreground object (mask bounding box, or the largest Otsu component)
   - shrink factors follow the blur width, so the sampled grid never undersamples the smoothed image
   - Rigid at coarse scales, Similarity at middle scales, then the requested transform at fine scales, with the last scale of a stage re-solved once by the next, looser transform
 
@@ -31,6 +31,7 @@ A wrapper script around ANTs' `antsRegistration` tool that provides optimized re
 
 The following ANTs tools must be available in your PATH:
 - `ImageMath`
+- `LabelGeometryMeasures`
 - `MeasureMinMaxMean`
 - `PrintHeader`
 - `ThresholdImage`
