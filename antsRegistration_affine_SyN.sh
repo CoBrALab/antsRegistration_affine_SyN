@@ -13,7 +13,7 @@
 # ARG_OPTIONAL_REPEATED([resampled-output],[o],[Output resampled file(s), repeat for resampling multispectral outputs])
 # ARG_OPTIONAL_REPEATED([resampled-linear-output],[],[Output resampled file(s) with only linear transform, repeat for resampling multispectral outputs])
 
-# ARG_OPTIONAL_SINGLE([initial-transform],[],[Initial moving transformation for registration. Can be one of: 'com-masks', 'com', 'cov', 'origin', 'antsai', 'none', or a transform filename, comma separated initalizations are applied like a stack, last in list first],[com-masks])
+# ARG_OPTIONAL_SINGLE([initial-transform],[],[Initial moving transformation for registration. Can be one of: 'com-masks', 'com', 'cov', 'origin', 'antsai', 'none', or a transform filename, comma separated initializations are applied like a stack, last in list first],[com-masks])
 # ARG_OPTIONAL_SINGLE([linear-type],[],[Type of linear transform],[affine])
 # ARG_TYPE_GROUP_SET([lineargroup],[LINEAR],[linear-type],[rigid,lsq6,similarity,lsq9,affine,lsq12])
 
@@ -152,7 +152,7 @@ print_help()
   printf '\t%s\n' "--keep-mask-after-extract, --no-keep-mask-after-extract: Keep using masks for metric after extraction (off by default)"
   printf '\t%s\n' "-o, --resampled-output: Output resampled file(s), repeat for resampling multispectral outputs (empty by default)"
   printf '\t%s\n' "--resampled-linear-output: Output resampled file(s) with only linear transform, repeat for resampling multispectral outputs (empty by default)"
-  printf '\t%s\n' "--initial-transform: Initial moving transformation for registration. Can be one of: 'com-masks', 'com', 'cov', 'origin', 'antsai', 'none', or a transform filename, comma separated initalizations are applied like a stack, last in list first (default: 'com-masks')"
+  printf '\t%s\n' "--initial-transform: Initial moving transformation for registration. Can be one of: 'com-masks', 'com', 'cov', 'origin', 'antsai', 'none', or a transform filename, comma separated initializations are applied like a stack, last in list first (default: 'com-masks')"
   printf '\t%s\n' "--linear-type: Type of linear transform. Can be one of: 'rigid', 'lsq6', 'similarity', 'lsq9', 'affine' and 'lsq12' (default: 'affine')"
   printf '\t%s\n' "--close, --no-close: Images are close in space and similarity, skip large scale pyramid search (off by default)"
   printf '\t%s\n' "--rough, --no-rough: Skip fine-resolution alignment, only perform rough parts of scale pyramid (off by default)"
@@ -1285,11 +1285,12 @@ for initxfm in "${_arg_initial_transform[@]}"; do
     initial_transform+="--initial-moving-transform [ ${fixedfile1},${movingfile1},2 ] "
   elif [[ ${initxfm} == "antsai" ]]; then
     info "Running antsAI rigid search between $(basename ${fixedfile1}) and $(basename ${movingfile1}) for registration initialization"
+    # Use the user masks, as com-masks does. -s treats NOMASK, NULL and missing files as absent.
     antsai_masks=""
-    if [[ ${fixedmask} != "NOMASK" && ${movingmask} != "NOMASK" ]]; then
-      antsai_masks="--masks [ ${fixedmask},${movingmask} ]"
-    elif [[ ${fixedmask} != "NOMASK" ]]; then
-      antsai_masks="--masks ${fixedmask}"
+    if [[ -s ${_arg_fixed_mask} && -s ${_arg_moving_mask} ]]; then
+      antsai_masks="--masks [ ${_arg_fixed_mask},${_arg_moving_mask} ]"
+    elif [[ -s ${_arg_fixed_mask} ]]; then
+      antsai_masks="--masks ${_arg_fixed_mask}"
     fi
     antsAI --dimensionality 3 --verbose 0 \
       --metric Mattes[ ${fixedfile1},${movingfile1},32,Regular,0.2 ] \

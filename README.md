@@ -48,7 +48,7 @@ Usage: ./antsRegistration_affine_SyN.sh [-h|--help] [--moving-mask <arg>] [--fix
         --keep-mask-after-extract, --no-keep-mask-after-extract: Keep using masks for metric after extraction (off by default)
         -o, --resampled-output: Output resampled file(s), repeat for resampling multispectral outputs (empty by default)
         --resampled-linear-output: Output resampled file(s) with only linear transform, repeat for resampling multispectral outputs (empty by default)
-        --initial-transform: Initial moving transformation for registration. Can be one of: 'com-masks', 'com', 'cov', 'origin', 'antsai', 'none', or a transform filename, comma separated initalizations are applied like a stack, last in list first (default: 'com-masks')
+        --initial-transform: Initial moving transformation for registration. Can be one of: 'com-masks', 'com', 'cov', 'origin', 'antsai', 'none', or a transform filename, comma separated initializations are applied like a stack, last in list first (default: 'com-masks')
         --linear-type: Type of linear transform. Can be one of: 'rigid', 'lsq6', 'similarity', 'lsq9', 'affine' and 'lsq12' (default: 'affine')
         --close, --no-close: Images are close in space and similarity, skip large scale pyramid search (off by default)
         --rough, --no-rough: Skip fine-resolution alignment, only perform rough parts of scale pyramid (off by default)
