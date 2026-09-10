@@ -727,21 +727,25 @@ image_geometry() {
 }
 
 # Prints the geometric mean of the foreground bounding-box extents (mm) of an image.
-# Uses the mask when one is given, otherwise the largest Otsu foreground component.
+# Uses the mask when one is given, otherwise the largest component of a four-threshold
+# Otsu foreground inside the nonzero voxels.
 object_extent() {
   local image=$1
   local mask=${2:-NOMASK}
   local fg="${tmpdir}/object_extent_$$.h5"
+  local nonzero="${tmpdir}/object_extent_nonzero_$$.h5"
   if [[ -s "${mask}" ]]; then
     ThresholdImage 3 "${mask}" "${fg}" 1e-12 Inf 1 0 >/dev/null
   else
-    ThresholdImage 3 "${image}" "${fg}" Otsu 1 >/dev/null
+    ThresholdImage 3 "${image}" "${nonzero}" 1e-12 Inf 1 0 >/dev/null
+    ThresholdImage 3 "${image}" "${fg}" Otsu 4 "${nonzero}" >/dev/null
+    ThresholdImage 3 "${fg}" "${fg}" 1.5 Inf 1 0 >/dev/null
     ImageMath 3 "${fg}" GetLargestComponent "${fg}" >/dev/null
   fi
   local spacing bbox
   spacing=$(PrintHeader "${fg}" 1 | tr 'x' ' ')
   bbox=$(LabelGeometryMeasures 3 "${fg}" 2>/dev/null | sed -n 2p | grep -o '\[[^]]*\]$' | tr -d '[],')
-  rm -f "${fg}"
+  rm -f "${fg}" "${nonzero}"
   awk -v sp="$spacing" -v bb="$bbox" 'BEGIN{
     split(sp, s, " "); n = split(bb, b, " ")
     if (n != 6) { print "NA"; exit }
