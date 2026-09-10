@@ -744,7 +744,8 @@ object_extent() {
   fi
   local spacing bbox
   spacing=$(PrintHeader "${fg}" 1 | tr 'x' ' ')
-  bbox=$(LabelGeometryMeasures 3 "${fg}" 2>/dev/null | sed -n 2p | grep -o '\[[^]]*\]$' | tr -d '[],')
+  # Tab-separated table on stdout: header, then one row per label. Keep label 1 only.
+  bbox=$(LabelGeometryMeasures 3 "${fg}" 2>/dev/null | awk -F'\t' 'NR > 1 && $1 == 1 {print $NF}' | tr -d '[],')
   rm -f "${fg}" "${nonzero}"
   awk -v sp="$spacing" -v bb="$bbox" 'BEGIN{
     split(sp, s, " "); n = split(bb, b, " ")
