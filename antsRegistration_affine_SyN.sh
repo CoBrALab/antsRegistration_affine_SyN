@@ -960,6 +960,11 @@ function make_affine_pyramid {
     return 0
   fi
 
+  if [[ -z "${min_spacing:-}" || -z "${min_fwhm:-}" || -z "${max_fwhm:-}" || -z "${convergence:-}" ]]; then
+    echo "Error: Required parameters --min-spacing, --min-fwhm, --max-fwhm, and --convergence must be provided" >&2
+    return 1
+  fi
+
   local params
   params=$(scale_space_params "$min_fwhm" "$max_fwhm" "$min_spacing")
   if [[ "$close" == "on" ]]; then

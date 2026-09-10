@@ -7,8 +7,8 @@ script="${here}/../antsRegistration_affine_SyN.sh"
 fns=$(mktemp)
 trap 'rm -f "$fns"' EXIT
 # Pull only the helper and pyramid functions out of the script.
-sed -n '/^function calc/,/^# Add handler for failure/p' "$script" | head -n -1 >"$fns"
-sed -n '/^function make_syn_pyramid/,/^# Setup exit trap/p' "$script" | head -n -1 >>"$fns"
+sed -n '/^function calc/,/^# Add handler for failure/p' "$script" | sed '$d' >"$fns"
+sed -n '/^function make_syn_pyramid/,/^# Setup exit trap/p' "$script" | sed '$d' >>"$fns"
 # shellcheck disable=SC1090
 source "$fns"
 
@@ -59,6 +59,11 @@ grep -c -- '--transform' <<<"$fmri" | grep -qx 2 || fail "fMRI affine expected 2
 # Case 4: tiny image where the finest scale exceeds the coarsest still yields one level.
 tiny=$(make_syn_pyramid --min-spacing 0.3 --min-fwhm 3.3 --max-fwhm 2 --convergence 1e-6 --final-iterations 20)
 ((  $(levels_of "$tiny" | wc -l) == 1 )) || fail "tiny image should give exactly one level"
+
+# Missing required parameters must fail, not hang.
+if make_affine_pyramid --min-spacing 1.0 --max-fwhm 12 --convergence 1e-6 --reg-type affine --linear-metric Mattes 2>/dev/null; then
+  fail "affine pyramid without --min-fwhm should fail"
+fi
 
 # Case 5: --rough drops shrink 1 and 2, --close caps shrink at 4.
 rough=$(make_syn_pyramid --min-spacing 1.0 --min-fwhm 1 --max-fwhm 12.06 --convergence 1e-6 --final-iterations 20 --rough)
