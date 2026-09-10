@@ -689,57 +689,41 @@ compute_mi_bins() {
     echo "${result[@]}"
 }
 
+# Geometric scale-space schedule. The effective FWHM (requested blur plus the
+# implicit one-voxel acquisition blur, in quadrature) steps by 2^(1/levels_per_octave)
+# from min_fwhm up to max_fwhm, both in fixed-image voxels. Prints "shrink sigma_mm"
+# per level, coarse to fine. shrink = floor(FWHM) keeps the sample spacing at or
+# below the blur width. Always emits at least the finest level.
 scale_space_params() {
-  local max_shrink=${1:-256}
-  local voxel_size=${2:-1.0}
-  local min_dim=$3
-  local implicit_fwhm=${4:-1.0}
-  local blurs_per_level=${5:-3}
-  local min_per_axis=16
-  local fwhm_to_sigma
-  fwhm_to_sigma=$(awk 'BEGIN{print 2 * sqrt(2 * log(2))}')
+  local min_fwhm=$1
+  local max_fwhm=$2
+  local voxel_size=$3
+  local levels_per_octave=${4:-4}
+  local implicit_fwhm=${5:-1.0}
+  awk -v lo="$min_fwhm" -v hi="$max_fwhm" -v vox="$voxel_size" -v lpo="$levels_per_octave" -v imp="$implicit_fwhm" 'BEGIN{
+    r = 2^(1/lpo)
+    n = 0
+    for (f = lo; f <= hi * 1.0001 || n == 0; f *= r) {
+      sq = f^2 - imp^2
+      fwhm[n] = f
+      sig[n] = (sq > 0) ? sqrt(sq) / (2 * sqrt(2 * log(2))) : 0
+      n++
+    }
+    for (i = n - 1; i >= 0; i--) printf "%d %.4f\n", int(fwhm[i] + 1e-9), sig[i] * vox
+  }'
+}
 
-  for ((n = 1; n <= max_shrink; n++)); do
-    if ((min_dim / n < min_per_axis)); then
-      break
-    fi
-
-    local sigma_lo sigma_hi
-    sigma_lo=$(echo "$n $implicit_fwhm $fwhm_to_sigma" | awk '{
-      sq = $1^2 - $2^2
-      print (sq > 0) ? sqrt(sq) / $3 : 0
-    }')
-    sigma_hi=$(echo "$n $implicit_fwhm $fwhm_to_sigma" | awk '{
-      sq = ($1+1)^2 - $2^2
-      print (sq > 0) ? sqrt(sq) / $3 : 0
-    }')
-
-    if ((blurs_per_level == 1)); then
-      local sigma_mm
-      if ((n == 1)); then
-        sigma_mm="0.0000"
-      else
-        sigma_mm=$(echo "$sigma_lo $voxel_size" | awk '{printf "%.4f", $1 * $2}')
-      fi
-      echo "$n $sigma_mm"
-    else
-      local k sigma_mm
-      for ((k = 0; k < blurs_per_level; k++)); do
-        if ((n == 1 && k == blurs_per_level - 1)); then
-          sigma_mm="0.0000"
-        else
-          sigma_mm=$(echo "$sigma_lo $sigma_hi $k $blurs_per_level $voxel_size" | awk '{
-            lo = ($1 > 0) ? $1 : 0.001
-            hi = ($2 > 0) ? $2 : 0.001
-            t = $3 / ($4 - 1)
-            sigma = hi * (lo/hi)^t
-            printf "%.4f", sigma * $5
-          }')
-        fi
-        echo "$n $sigma_mm"
-      done
-    fi
-  done
+# Prints "min_spacing_mm min_extent_mm" over the first three axes of an image.
+image_geometry() {
+  local spacing dims
+  spacing=$(PrintHeader "$1" 1 | tr 'x' ' ')
+  dims=$(PrintHeader "$1" 2 | tr 'x' ' ')
+  awk -v sp="$spacing" -v dm="$dims" 'BEGIN{
+    split(sp, s, " "); split(dm, d, " ")
+    ms = s[1]; me = s[1] * d[1]
+    for (i = 2; i <= 3; i++) { if (s[i] < ms) ms = s[i]; if (s[i] * d[i] < me) me = s[i] * d[i] }
+    print ms, me
+  }'
 }
 
 # Add handler for failure to show where things went wrong
@@ -758,7 +742,8 @@ trap 'failure_handler "${BASH_LINENO[*]}" "$LINENO" "${FUNCNAME[*]:-script}" "$?
 
 function make_syn_pyramid {
   local min_spacing
-  local min_length
+  local min_fwhm
+  local max_fwhm
   local convergence
   local final_iterations
   local rough="off"
@@ -772,8 +757,12 @@ function make_syn_pyramid {
       min_spacing="$2"
       shift 2
       ;;
-    --min-length)
-      min_length="$2"
+    --min-fwhm)
+      min_fwhm="$2"
+      shift 2
+      ;;
+    --max-fwhm)
+      max_fwhm="$2"
       shift 2
       ;;
     --convergence)
@@ -801,45 +790,33 @@ function make_syn_pyramid {
     esac
   done
 
-  if [[ -z "$min_spacing" ]] || [[ -z "$min_length" ]] || [[ -z "$convergence" ]]; then
-    echo "Error: Required parameters --min-spacing, --min-length, and --convergence must be provided" >&2
+  if [[ -z "$min_spacing" ]] || [[ -z "$min_fwhm" ]] || [[ -z "$max_fwhm" ]] || [[ -z "$convergence" ]]; then
+    echo "Error: Required parameters --min-spacing, --min-fwhm, --max-fwhm, and --convergence must be provided" >&2
     return 1
   fi
 
   local params
+  params=$(scale_space_params "$min_fwhm" "$max_fwhm" "$min_spacing")
   if [[ "$close" == "on" ]]; then
-    params=$(scale_space_params 4 "$min_spacing" "$min_length")
-  else
-    params=$(scale_space_params 256 "$min_spacing" "$min_length")
+    params=$(echo "$params" | awk '$1 <= 4')
   fi
-
   if [[ "$rough" == "on" ]]; then
     params=$(echo "$params" | awk '$1 > 2')
   fi
-
   if [[ -z "$params" ]]; then
-    echo "Error: No registration levels remain after rough filtering" >&2
+    echo "Error: No registration levels remain after rough/close filtering" >&2
     return 1
   fi
 
-  local unique_shrinks
-  unique_shrinks=$(echo "$params" | awk '{print $1}' | sort -nru)
-
-  local shrinks=""
-  local smooths=""
-  local iterations=""
-
-  for band_shrink in $unique_shrinks; do
-    while read -r sigma; do
-      [[ -z "$sigma" ]] && continue
-      shrinks+="${band_shrink}x"
-      smooths+="${sigma}x"
-      local iter
-      iter=$(round "${final_iterations} * ${band_shrink}^3")
-      ((iter > 3200)) && iter=3200
-      iterations+="${iter}x"
-    done <<< "$(echo "$params" | awk -v s="$band_shrink" '$1 == s {print $2}')"
-  done
+  local shrinks="" smooths="" iterations="" s sigma iter
+  while read -r s sigma; do
+    [[ -z "$s" ]] && continue
+    shrinks+="${s}x"
+    smooths+="${sigma}x"
+    iter=$(round "${final_iterations} * ${s}^3")
+    ((iter > 3200)) && iter=3200
+    iterations+="${iter}x"
+  done <<< "$params"
 
   echo --shrink-factors ${shrinks%x} \\
   echo --smoothing-sigmas ${smooths%x}mm \\
@@ -848,7 +825,8 @@ function make_syn_pyramid {
 
 function make_affine_pyramid {
   local min_spacing
-  local min_length
+  local min_fwhm
+  local max_fwhm
   local number_of_image_pairs="1"
   local convergence
   local final_iterations=50
@@ -871,8 +849,12 @@ function make_affine_pyramid {
       min_spacing="$2"
       shift 2
       ;;
-    --min-length)
-      min_length="$2"
+    --min-fwhm)
+      min_fwhm="$2"
+      shift 2
+      ;;
+    --max-fwhm)
+      max_fwhm="$2"
       shift 2
       ;;
     --number-of-image-pairs)
@@ -978,64 +960,66 @@ function make_affine_pyramid {
     return 0
   fi
 
-  local params
-  if [[ "$close" == "on" ]]; then
-    params=$(scale_space_params 4 "$min_spacing" "$min_length")
-  else
-    params=$(scale_space_params 256 "$min_spacing" "$min_length")
-  fi
-
-  if [[ "$rough" == "on" ]]; then
-    params=$(echo "$params" | awk '$1 > 2')
-  fi
-
-  if [[ -z "$params" ]]; then
-    echo "Error: No registration levels remain after rough filtering" >&2
+  if [[ -z "${min_spacing:-}" || -z "${min_fwhm:-}" || -z "${max_fwhm:-}" || -z "${convergence:-}" ]]; then
+    echo "Error: Required parameters --min-spacing, --min-fwhm, --max-fwhm, and --convergence must be provided" >&2
     return 1
   fi
 
-  local unique_shrinks
-  unique_shrinks=$(echo "$params" | awk '{print $1}' | sort -nu | tac)
+  local params
+  params=$(scale_space_params "$min_fwhm" "$max_fwhm" "$min_spacing")
+  if [[ "$close" == "on" ]]; then
+    params=$(echo "$params" | awk '$1 <= 4')
+  fi
+  if [[ "$rough" == "on" ]]; then
+    params=$(echo "$params" | awk '$1 > 2')
+  fi
+  if [[ -z "$params" ]]; then
+    echo "Error: No registration levels remain after rough/close filtering" >&2
+    return 1
+  fi
 
-  local -a coarse_shrinks=()
-  local -a mid_shrinks=()
-  local -a fine_shrinks=()
-  for s in $unique_shrinks; do
+  # Levels are "shrink sigma_mm", coarse to fine. Band them by shrink factor.
+  local -a levels
+  mapfile -t levels <<< "$params"
+  local -a coarse_levels=() mid_levels=() fine_levels=()
+  local i s
+  for ((i = 0; i < ${#levels[@]}; i++)); do
+    s=${levels[i]%% *}
     if ((s > 4)); then
-      coarse_shrinks+=("$s")
+      coarse_levels+=("$i")
     elif ((s > 2)); then
-      mid_shrinks+=("$s")
+      mid_levels+=("$i")
     else
-      fine_shrinks+=("$s")
+      fine_levels+=("$i")
     fi
   done
 
   local -a stage_transforms=()
   local -a stage_masks=()
-  local -a stage_shrink_lists=()
+  local -a stage_levels=()
 
-  if ((${#coarse_shrinks[@]} > 0)); then
+  if ((${#coarse_levels[@]} > 0)); then
     stage_transforms+=("Rigid[ 0.1 ]")
     stage_masks+=("$( [[ "$mask_all" == "on" ]] && echo yes || echo no )")
-    stage_shrink_lists+=("${coarse_shrinks[*]}")
+    stage_levels+=("${coarse_levels[*]}")
   fi
 
-  if ((${#mid_shrinks[@]} > 0)); then
+  if ((${#mid_levels[@]} > 0)); then
     if [[ "${reg_type}" == "rigid" || "${reg_type}" == "lsq6" ]]; then
       stage_transforms+=("Rigid[ 0.1 ]")
     else
       stage_transforms+=("Similarity[ 0.1 ]")
     fi
     stage_masks+=("$( [[ "$mask_all" == "on" ]] && echo yes || echo no )")
-    stage_shrink_lists+=("${mid_shrinks[*]}")
+    stage_levels+=("${mid_levels[*]}")
     if [[ "$masked" == "on" && "$mask_all" == "off" ]]; then
       stage_transforms+=("${stage_transforms[-1]}")
       stage_masks+=("yes")
-      stage_shrink_lists+=("${mid_shrinks[*]}")
+      stage_levels+=("${mid_levels[*]}")
     fi
   fi
 
-  if ((${#fine_shrinks[@]} > 0)); then
+  if ((${#fine_levels[@]} > 0)); then
     if [[ "${reg_type}" == "rigid" || "${reg_type}" == "lsq6" ]]; then
       stage_transforms+=("Rigid[ 0.1 ]")
     elif [[ "${reg_type}" == "similarity" || "${reg_type}" == "lsq9" ]]; then
@@ -1044,23 +1028,36 @@ function make_affine_pyramid {
       stage_transforms+=("Affine[ 0.1 ]")
     fi
     stage_masks+=("yes")
-    stage_shrink_lists+=("${fine_shrinks[*]}")
+    stage_levels+=("${fine_levels[*]}")
   fi
+
+  # The last stage always solves the requested transform type, also when the
+  # finest useful scale leaves no fine band (for example a 3 mm EPI on a 1 mm T1).
+  if [[ "${reg_type}" == "rigid" || "${reg_type}" == "lsq6" ]]; then
+    stage_transforms[-1]="Rigid[ 0.1 ]"
+  elif [[ "${reg_type}" == "similarity" || "${reg_type}" == "lsq9" ]]; then
+    stage_transforms[-1]="Similarity[ 0.1 ]"
+  else
+    stage_transforms[-1]="Affine[ 0.1 ]"
+  fi
+
+  # Hand-over: when the transform type changes, re-solve the last scale of the
+  # previous stage with the looser transform before going to finer scales.
+  for ((i = 1; i < ${#stage_transforms[@]}; i++)); do
+    if [[ "${stage_transforms[i]}" != "${stage_transforms[i - 1]}" ]]; then
+      local -a prev=(${stage_levels[i - 1]})
+      stage_levels[i]="${prev[-1]} ${stage_levels[i]}"
+    fi
+  done
 
   local -a stage_bins=()
   if [[ "${linear_metric}" == "Mattes" && -n "${fixed_image:-}" ]]; then
-    local -a all_shrinks=($unique_shrinks)
-    local all_bins
-    all_bins=($(compute_mi_bins "${fixed_image}" "${all_shrinks[@]}"))
-    local -A bin_map=()
-    for ((j = 0; j < ${#all_shrinks[@]}; j++)); do
-      bin_map[${all_shrinks[j]}]=${all_bins[j]}
-    done
+    local -a first_shrinks=()
     for ((i = 0; i < ${#stage_transforms[@]}; i++)); do
-      local stage_shrink_arr=(${stage_shrink_lists[i]})
-      local max_s=${stage_shrink_arr[0]}
-      stage_bins+=("${bin_map[$max_s]}")
+      local -a idx=(${stage_levels[i]})
+      first_shrinks+=("${levels[${idx[0]}]%% *}")
     done
+    stage_bins=($(compute_mi_bins "${fixed_image}" "${first_shrinks[@]}"))
   else
     for ((i = 0; i < ${#stage_transforms[@]}; i++)); do
       stage_bins+=("32")
@@ -1068,20 +1065,14 @@ function make_affine_pyramid {
   fi
 
   for ((i = 0; i < ${#stage_transforms[@]}; i++)); do
-    local shrinks=""
-    local smooths=""
-    local iterations=""
-
-    for s in ${stage_shrink_lists[i]}; do
-      while read -r sigma; do
-        [[ -z "$sigma" ]] && continue
-        shrinks+="${s}x"
-        smooths+="${sigma}x"
-        local iter
-        iter=$(round "${final_iterations} * ${s}^3")
-        ((iter > 3200)) && iter=3200
-        iterations+="${iter}x"
-      done <<< "$(echo "$params" | awk -v s="$s" '$1 == s {print $2}')"
+    local shrinks="" smooths="" iterations="" j sigma iter
+    for j in ${stage_levels[i]}; do
+      read -r s sigma <<< "${levels[j]}"
+      shrinks+="${s}x"
+      smooths+="${sigma}x"
+      iter=$(round "${final_iterations} * ${s}^3")
+      ((iter > 3200)) && iter=3200
+      iterations+="${iter}x"
     done
 
     echo --transform ${stage_transforms[i]} \\
@@ -1309,12 +1300,15 @@ else
   _arg_close=""
 fi
 
-fixed_minimum_resolution=$(PrintHeader ${fixedfile1} 1 | tr 'x' '\n' | sort -n | head -1)
-info "Minimum voxel dimension ${fixed_minimum_resolution} mm"
+read -r fixed_minimum_resolution fixed_minimum_extent < <(image_geometry "${fixedfile1}")
+read -r moving_minimum_resolution moving_minimum_extent < <(image_geometry "${movingfile1}")
+info "Minimum voxel dimension ${fixed_minimum_resolution} mm (fixed), ${moving_minimum_resolution} mm (moving)"
 
-# Calculate minimum number of slices using the size of the fixed image
-fixed_minimum_slices=$(PrintHeader ${fixedfile1} 2 | tr 'x' '\n' | sort -n | head -1)
-info "Minimum number of slices ${fixed_minimum_slices}"
+# Finest useful scale is the coarser image's voxel. Coarsest scale keeps at least
+# 16 samples along the smallest axis of the smaller field of view. Both in fixed voxels.
+min_fwhm=$(awk -v m="${moving_minimum_resolution}" -v f="${fixed_minimum_resolution}" 'BEGIN{ r = m / f; printf "%.4f", (r > 1) ? r : 1 }')
+max_fwhm=$(awk -v a="${fixed_minimum_extent}" -v b="${moving_minimum_extent}" -v f="${fixed_minimum_resolution}" 'BEGIN{ printf "%.4f", ((a < b) ? a : b) / (16 * f) }')
+info "Scale range ${min_fwhm} to ${max_fwhm} fixed voxels FWHM"
 
 if [[ ${fixedmask} != "NOMASK" || ${movingmask} != "NOMASK" ]]; then
   _arg_masked="--masked"
@@ -1341,7 +1335,8 @@ if [[ -n ${_arg_linear_convergence} && -n ${_arg_linear_shrink_factors} && -n ${
 else
   steps_linear=$(make_affine_pyramid \
     --min-spacing "${fixed_minimum_resolution}" \
-    --min-length "${fixed_minimum_slices}" \
+    --min-fwhm "${min_fwhm}" \
+    --max-fwhm "${max_fwhm}" \
     --number-of-image-pairs "$((${#_arg_fixed[@]} + 1))" \
     --convergence "${_arg_convergence}" \
     --final-iterations "${_arg_final_iterations_linear}" \
@@ -1357,7 +1352,8 @@ if [[ -n ${_arg_syn_convergence} && -n ${_arg_syn_shrink_factors} && -n ${_arg_s
 else
   steps_syn=$(make_syn_pyramid \
     --min-spacing "${fixed_minimum_resolution}" \
-    --min-length "${fixed_minimum_slices}" \
+    --min-fwhm "${min_fwhm}" \
+    --max-fwhm "${max_fwhm}" \
     --convergence "${_arg_convergence}" \
     --final-iterations "${_arg_final_iterations_nonlinear}" \
     "${_arg_rough}" \
