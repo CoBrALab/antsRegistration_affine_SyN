@@ -1145,6 +1145,10 @@ if [[ ! ${#_arg_fixed[@]} -eq ${#_arg_moving[@]} ]]; then
   failure "Number of multispectral moving and fixed inputs not equal"
 fi
 
+if [[ ${_arg_skip_linear} == "on" && ${_arg_skip_nonlinear} == "on" ]]; then
+  failure "--skip-linear and --skip-nonlinear together leave no registration to run"
+fi
+
 #Check for minc or nifti, make appropriate adjustments of transforms
 if [[ "${_arg_movingfile}" == *mnc && "${_arg_fixedfile}" == *mnc ]]; then
   info "MINC input files detected, antsRegistration will be run with --minc"
