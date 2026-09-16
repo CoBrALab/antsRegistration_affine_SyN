@@ -47,7 +47,7 @@ The following ANTs tools must be available in your PATH:
 ## Full command line help
 ```bash
 A wrapper around antsRegistration providing optimized registration pyramids
-Usage: ./antsRegistration_affine_SyN.sh [-h|--help] [--moving-mask <arg>] [--fixed-mask <arg>] [--(no-)mask-extract] [--(no-)keep-mask-after-extract] [-o|--resampled-output <arg>] [--resampled-linear-output <arg>] [--initial-transform <arg>] [--linear-type <LINEAR>] [--(no-)close] [--(no-)rough] [--fixed <arg>] [--moving <arg>] [--weights <arg>] [--convergence <arg>] [--(no-)skip-linear] [--linear-metric <arg>] [--linear-shrink-factors <arg>] [--linear-smoothing-sigmas <arg>] [--linear-convergence <arg>] [--final-iterations-linear <arg>] [--(no-)skip-nonlinear] [--syn-control <arg>] [--syn-metric <arg>] [--syn-shrink-factors <arg>] [--syn-smoothing-sigmas <arg>] [--syn-convergence <arg>] [--final-iterations-nonlinear <arg>] [--(no-)histogram-matching] [--winsorize-image-intensities <arg>] [--(no-)fast] [--(no-)float] [-c|--(no-)clobber] [-v|--(no-)verbose] [-d|--(no-)debug] <movingfile> <fixedfile> <outputbasename>
+Usage: ./antsRegistration_affine_SyN.sh [-h|--help] [--moving-mask <arg>] [--fixed-mask <arg>] [--(no-)mask-extract] [--(no-)keep-mask-after-extract] [--otsu-foreground-threshold <arg>] [-o|--resampled-output <arg>] [--resampled-linear-output <arg>] [--initial-transform <arg>] [--linear-type <LINEAR>] [--(no-)close] [--(no-)rough] [--fixed <arg>] [--moving <arg>] [--weights <arg>] [--convergence <arg>] [--(no-)skip-linear] [--linear-metric <arg>] [--linear-shrink-factors <arg>] [--linear-smoothing-sigmas <arg>] [--linear-convergence <arg>] [--final-iterations-linear <arg>] [--(no-)skip-nonlinear] [--syn-control <arg>] [--syn-metric <arg>] [--syn-shrink-factors <arg>] [--syn-smoothing-sigmas <arg>] [--syn-convergence <arg>] [--final-iterations-nonlinear <arg>] [--(no-)histogram-matching] [--winsorize-image-intensities <arg>] [--(no-)fast] [--(no-)float] [-c|--(no-)clobber] [-v|--(no-)verbose] [-d|--(no-)debug] <movingfile> <fixedfile> <outputbasename>
         <movingfile>: The moving image
         <fixedfile>: The fixed image
         <outputbasename>: The basename for the output transforms
@@ -56,6 +56,7 @@ Usage: ./antsRegistration_affine_SyN.sh [-h|--help] [--moving-mask <arg>] [--fix
         --fixed-mask: Mask for fixed image (default: 'NOMASK')
         --mask-extract, --no-mask-extract: Use masks to extract input images, only works with both images masked (off by default)
         --keep-mask-after-extract, --no-keep-mask-after-extract: Keep using masks for metric after extraction (off by default)
+        --otsu-foreground-threshold: Otsu class threshold which separates background from foreground when the object extent is measured without a mask, four Otsu thresholds give classes 1 to 5 (default: '1.5')
         -o, --resampled-output: Output resampled file(s), repeat for resampling multispectral outputs (empty by default)
         --resampled-linear-output: Output resampled file(s) with only linear transform, repeat for resampling multispectral outputs (empty by default)
         --initial-transform: Initial moving transformation for registration. Can be one of: 'com-masks', 'com', 'cov', 'origin', 'antsai', 'none', or a transform filename, comma separated initializations are applied like a stack, last in list first (default: 'com-masks')
@@ -101,6 +102,7 @@ Usage: ./antsRegistration_affine_SyN.sh [-h|--help] [--moving-mask <arg>] [--fix
 - `--initial-transform <arg>`: Initial transform type or file (options: 'com-masks', 'com', 'cov', 'origin', 'antsai', 'none', or transform filename)
 - `--linear-type <type>`: Type of linear transform (options: rigid, lsq6, similarity, lsq9, affine, lsq12)
 - `--resampled-output`: Output resampled file(s)
+- `--otsu-foreground-threshold <arg>`: Otsu class cutoff for the automatic object extent when no mask is given, larger values keep only brighter tissue (default: 1.5)
 - `--fast`: Run fast SyN registration using Mattes similarity metric
 - `--close`: For images close in space and similarity
 - `--rough`: Skip fine-resolution alignment
